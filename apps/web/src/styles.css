@@ -1,0 +1,169 @@
+@import 'tailwindcss';
+@import '@acs/renderer/fonts.css';
+
+/* PRD §71–74: quiet, neutral, colour only for state. */
+@theme {
+  --color-canvas: #f6f6f6;
+  --color-panel: #ffffff;
+  --color-ink: #111111;
+  --color-muted: #717171;
+  --color-faint: #a3a3a3;
+  --color-line: #e8e8e8;
+  --color-line-strong: #d9d9d9;
+  --color-hover: #f2f2f2;
+  --color-selected: #111111;
+  --color-warn: #b7791f;
+  --color-warn-bg: #fdf6e7;
+  --color-err: #c0392b;
+  --color-err-bg: #fbeceb;
+  --color-ok: #2f855a;
+  --color-ok-bg: #eaf5ee;
+  --color-info: #3b5bdb;
+  --color-info-bg: #edf1fd;
+
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+
+  --text-meta: 11.5px;
+  --text-label: 12.5px;
+  --text-body: 14px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px -6px rgba(0, 0, 0, 0.14);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  ::selection {
+    background: #111;
+    color: #fff;
+  }
+  :focus-visible {
+    outline: 2px solid #111;
+    outline-offset: 2px;
+  }
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+}
+
+@layer components {
+  /* pressables give immediate feedback (scale on :active) without animating hover on touch */
+  .press {
+    transition: transform 160ms var(--ease-out), background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .press:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+
+  /* Radix popovers/menus/tooltips scale from their trigger */
+  .pop {
+    transform-origin: var(--radix-popper-transform-origin, var(--radix-dropdown-menu-content-transform-origin, center));
+    animation: pop-in 160ms var(--ease-out);
+  }
+  .pop[data-state='closed'] {
+    animation: pop-out 110ms ease-in forwards;
+  }
+  @keyframes pop-in {
+    from { opacity: 0; transform: scale(0.96); }
+  }
+  @keyframes pop-out {
+    to { opacity: 0; transform: scale(0.98); }
+  }
+
+  .modal {
+    animation: modal-in 200ms var(--ease-out);
+  }
+  @keyframes modal-in {
+    from { opacity: 0; transform: translate(-50%, -48%) scale(0.98); }
+  }
+  .scrim {
+    animation: fade-in 200ms ease;
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+  }
+
+  .skeleton {
+    background: linear-gradient(90deg, #efefef 0%, #f7f7f7 50%, #efefef 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s linear infinite;
+  }
+  @keyframes shimmer {
+    to { background-position: -200% 0; }
+  }
+
+  .checker {
+    background-color: #fafafa;
+    background-image: linear-gradient(45deg, #efefef 25%, transparent 25%), linear-gradient(-45deg, #efefef 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #efefef 75%), linear-gradient(-45deg, transparent 75%, #efefef 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  }
+
+  .scroll-quiet {
+    scrollbar-width: thin;
+    scrollbar-color: #d6d6d6 transparent;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .hoverable:hover {
+    background-color: var(--color-hover);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop,
+  .modal,
+  .scrim {
+    animation-duration: 1ms !important;
+  }
+  .press:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* react-moveable: quiet handles that match the palette */
+.acs-moveable .moveable-control {
+  width: 9px !important;
+  height: 9px !important;
+  margin-top: -4.5px !important;
+  margin-left: -4.5px !important;
+  border: 1.5px solid #111 !important;
+  background: #fff !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+.acs-moveable .moveable-line {
+  background: #111 !important;
+}
+.acs-moveable .moveable-line.moveable-guideline,
+.acs-moveable .moveable-line.moveable-bold {
+  background: #ff3b6b !important;
+}
+.acs-moveable .moveable-rotation .moveable-rotation-control {
+  border-color: #111 !important;
+}

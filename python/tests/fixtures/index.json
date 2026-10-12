@@ -1,0 +1,30 @@
+{
+ "https://arnifi.com/services/will-drafting?pageSize=100": {
+  "file": "161dcfb60c0894e8.html",
+  "final": "https://arnifi.com/services/will-drafting?pageSize=100"
+ },
+ "https://arnifi.com/services/will-drafting/mirror-will-standard": {
+  "file": "5d0ed5a18dbc5145.html",
+  "final": "https://arnifi.com/services/will-drafting/mirror-will-standard"
+ },
+ "https://arnifi.com/services/will-drafting/mirror-will-premium": {
+  "file": "c80db3a8f16eaba1.html",
+  "final": "https://arnifi.com/services/will-drafting/mirror-will-premium"
+ },
+ "https://arnifi.com/services/will-drafting/single-will-standard": {
+  "file": "e22b4a4b212fe77c.html",
+  "final": "https://arnifi.com/services/will-drafting/single-will-standard"
+ },
+ "https://arnifi.com/services/will-drafting/single-will-premium": {
+  "file": "f1f3c1066a8b03ac.html",
+  "final": "https://arnifi.com/services/will-drafting/single-will-premium"
+ },
+ "https://arnifi.com/product-listing?countries=23&productType=licence&pageSize=100": {
+  "file": "b76e1ecf2761503e.html",
+  "final": "https://arnifi.com/product-listing?countries=23&productType=licence&pageSize=100"
+ },
+ "https://arnifi.com/product-details/licence/saint-vincent-and-the-grenadines/saint-vincent-and-the-grenadines-llc-incorporation": {
+  "file": "54a6efa832b42b1b.html",
+  "final": "https://arnifi.com/product-details/licence/saint-vincent-and-the-grenadines/saint-vincent-and-the-grenadines-llc-incorporation"
+ }
+}

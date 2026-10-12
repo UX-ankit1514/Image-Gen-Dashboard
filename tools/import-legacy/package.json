@@ -1,0 +1,13 @@
+{
+  "name": "@acs/import-legacy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "import": "tsx src/import.ts"
+  },
+  "dependencies": {
+    "@acs/renderer": "*",
+    "@acs/types": "*"
+  }
+}

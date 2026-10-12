@@ -1,0 +1,206 @@
+[
+  {
+    "id": "dark-02-01",
+    "photo": "photo.png",
+    "card": {
+      "recipe": "arnifi-classic",
+      "title": "KSA Company Formation",
+      "kicker": "Vision 2030 Opportunities",
+      "focus": "center 42%",
+      "stack": "studio"
+    },
+    "source": "02-saudi-arabia/01_ksa-company-formation.jpg",
+    "sourcePhoto": "01_ksa-company-formation.png"
+  },
+  {
+    "id": "dark-02-02",
+    "photo": "photo.png",
+    "card": {
+      "recipe": "arnifi-classic",
+      "title": "Ministry of Investment Service License - Silver",
+      "kicker": "General Manager Visa & Iqama Support",
+      "focus": "center 42%",
+      "stack": "studio"
+    },
+    "source": "02-saudi-arabia/02_ministry-of-investment-service-license-silver.jpg",
+    "sourcePhoto": "02_ministry-of-investment-service-license-silver.png"
+  },
+  {
+    "id": "dark-01-01",
+    "photo": "photo.jpg",
+    "card": {
+      "recipe": "arnifi-classic",
+      "title": "Saint Vincent & The Grenadines – LLC Incorporation",
+      "kicker": "Global Business Use",
+      "focus": "center 42%",
+      "stack": "studio"
+    },
+    "source": "01-saint-vincent-and-the-grenadines/01_saint-vincent-and-the-grenadines-llc-incorporation.jpg",
+    "sourcePhoto": "01_saint-vincent-and-the-grenadines-llc-incorporation.jpg"
+  },
+  {
+    "id": "dark-05-02",
+    "photo": "photo.png",
+    "card": {
+      "recipe": "arnifi-classic",
+      "title": "Singapore Proposal Mainland | Foreign National - EP Application",
+      "kicker": "Long-Term Employment Opportunity",
+      "focus": "center 42%",
+      "stack": "studio"
+    },
+    "source": "05-singapore/02_singapore-proposal-mainland-or-foreign-national-ep-application.jpg",
+    "sourcePhoto": "02_singapore-proposal-mainland-or-foreign-national-ep-appli.png"
+  },
+  {
+    "id": "dark-02-03",
+    "photo": "photo.png",
+    "card": {
+      "recipe": "arnifi-classic",
+      "title": "Ministry of Investment Service License - Platinum",
+      "kicker": "Monsha’at Certification",
+      "focus": "center 42%",
+      "stack": "studio"
+    },
+    "source": "02-saudi-arabia/03_ministry-of-investment-service-license-platinum.jpg",
+    "sourcePhoto": "03_ministry-of-investment-service-license-platinum.png"
+  },
+  {
+    "id": "dark-02-04",
+    "photo": "photo.png",
+    "card": {
+      "recipe": "arnifi-classic",
+      "title": "Ministry of Investment Service License - Gold",
+      "kicker": "Structured & Transparent Process",
+      "focus": "center 42%",
+      "stack": "studio"
+    },
+    "source": "02-saudi-arabia/04_misa-service-license-gold-package.jpg",
+    "sourcePhoto": "04_misa-service-license-gold-package.png"
+  },
+  {
+    "id": "light-sg-01",
+    "photo": "photo.jpg",
+    "card": {
+      "recipe": "arnifi-light",
+      "title": "Singapore Premium Incorporation",
+      "kicker": "Tax Efficient",
+      "focus": "center 42%",
+      "stack": "studio",
+      "boost": false
+    },
+    "source": "Start your Business - company - Singapore/Singapore/01_singapore-premium-incorporation.jpg [studio]",
+    "sourcePhoto": "01_singapore-premium-incorporation.jpg"
+  },
+  {
+    "id": "light-sg-02",
+    "photo": "photo.png",
+    "card": {
+      "recipe": "arnifi-light",
+      "title": "Singapore Proposal Mainland | Foreign National - EP Application",
+      "kicker": "Long-Term Employment Opportunity",
+      "focus": "center 42%",
+      "stack": "studio",
+      "boost": false
+    },
+    "source": "Start your Business - company - Singapore/Singapore/02_singapore-proposal-mainland-foreign-national-ep-application.jpg [studio]",
+    "sourcePhoto": "02_singapore-proposal-mainland-or-foreign-national-ep-appli.png"
+  },
+  {
+    "id": "light-ksa-01",
+    "photo": "photo.png",
+    "card": {
+      "recipe": "arnifi-light",
+      "title": "KSA Company Formation",
+      "kicker": "Vision 2030 Opportunities",
+      "focus": "center 42%",
+      "stack": "studio",
+      "boost": true
+    },
+    "source": "Start your Business - company - Saudi Arabia/Ministry of Investment - SAGIA/01_ksa-company-formation.jpg (boost) [studio]",
+    "sourcePhoto": "01_ksa-company-formation.png"
+  },
+  {
+    "id": "light-ksa-02",
+    "photo": "photo.png",
+    "card": {
+      "recipe": "arnifi-light",
+      "title": "Ministry of Investment Service License - Silver",
+      "kicker": "General Manager Visa & Iqama Support",
+      "focus": "center 42%",
+      "stack": "studio",
+      "boost": false
+    },
+    "source": "Start your Business - company - Saudi Arabia/Ministry of Investment - SAGIA/02_ministry-of-investment-service-license-silver.jpg [studio]",
+    "sourcePhoto": "02_ministry-of-investment-service-license-silver.png"
+  },
+  {
+    "id": "light-ksa-03",
+    "photo": "photo.png",
+    "card": {
+      "recipe": "arnifi-light",
+      "title": "Ministry of Investment Service License - Platinum",
+      "kicker": "Monsha’at Certification",
+      "focus": "center 42%",
+      "stack": "studio",
+      "boost": false
+    },
+    "source": "Start your Business - company - Saudi Arabia/Ministry of Investment - SAGIA/03_ministry-of-investment-service-license-platinum.jpg [studio]",
+    "sourcePhoto": "03_ministry-of-investment-service-license-platinum.png"
+  },
+  {
+    "id": "light-hk-01",
+    "photo": "photo.png",
+    "card": {
+      "recipe": "arnifi-light",
+      "title": "Hong Kong Company Setup | Complete Digital Incorporation",
+      "kicker": "First-Year Compliance Included",
+      "focus": "center 42%",
+      "stack": "studio",
+      "boost": false
+    },
+    "source": "Start your Business - company - Hong Kong/Hong Kong/01_hong-kong-company-setup-complete-digital-incorporation.jpg [studio]",
+    "sourcePhoto": "01_hong-kong-company-setup.png"
+  },
+  {
+    "id": "light-uae-64",
+    "photo": "photo.jpg",
+    "card": {
+      "recipe": "arnifi-light",
+      "title": "Ajman Media City - Packages",
+      "kicker": "Cost-effective",
+      "focus": "center 42%",
+      "stack": "legacy",
+      "boost": true
+    },
+    "source": "Start your Business - company - UAE/Ajman Media City/64_ajman-media-city-packages.jpg (boost) [legacy]",
+    "sourcePhoto": "77_ajman-media-city-packages.jpg"
+  },
+  {
+    "id": "light-uae-02",
+    "photo": "photo.webp",
+    "card": {
+      "recipe": "arnifi-light",
+      "title": "Dubai - Mainland License (Standard Professional Activity)",
+      "kicker": "Direct UAE market access",
+      "focus": "center 42%",
+      "stack": "legacy",
+      "boost": false
+    },
+    "source": "Start your Business - company - UAE/Dubai Mainland/02_dubai-mainland-license-standard-professional-activity.jpg [legacy]",
+    "sourcePhoto": "02_dubai-mainland-license-standard-professional-activity.webp"
+  },
+  {
+    "id": "light-uae-03",
+    "photo": "photo.jpg",
+    "card": {
+      "recipe": "arnifi-light",
+      "title": "RAKEZ - Biz Saver Plus One",
+      "kicker": "Global Connectivity",
+      "focus": "center 42%",
+      "stack": "legacy",
+      "boost": false
+    },
+    "source": "Start your Business - company - UAE/RAKEZ/03_rakez-biz-saver-plus-one.jpg [legacy]",
+    "sourcePhoto": "03_rakez-biz-saver-plus-one.jpg"
+  }
+]

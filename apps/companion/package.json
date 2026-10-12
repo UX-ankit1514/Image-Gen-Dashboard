@@ -1,0 +1,17 @@
+{
+  "name": "@acs/companion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "arnifi-companion": "src/cli.ts"
+  },
+  "scripts": {
+    "start": "tsx src/cli.ts",
+    "pair": "tsx src/cli.ts pair"
+  },
+  "dependencies": {
+    "@acs/providers": "*",
+    "@acs/types": "*"
+  }
+}

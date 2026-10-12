@@ -1,0 +1,13 @@
+{
+  "name": "@acs/storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@acs/types": "*",
+    "@acs/shared": "*",
+    "aws4fetch": "1.0.20"
+  }
+}
