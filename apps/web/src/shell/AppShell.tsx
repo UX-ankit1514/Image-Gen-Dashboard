@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router';
-import { Download, FolderKanban, Images, Inbox, LayoutTemplate, Plus, Settings, Sparkles } from 'lucide-react';
+import { AlertTriangle, Download, FolderKanban, Images, Inbox, LayoutTemplate, Plus, Settings, Sparkles } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { cx } from '../ui';
@@ -43,8 +43,27 @@ export function AppShell() {
         <div className="mt-auto px-4 py-3 text-[11px] text-faint">Arnifi · V1</div>
       </aside>
       <main className="min-w-0 flex-1 overflow-auto scroll-quiet">
+        <SetupNotice />
         <Outlet />
       </main>
+    </div>
+  );
+}
+
+/** Shown when the server is deployed without its database/storage settings (e.g. a fresh Vercel project). */
+function SetupNotice() {
+  const { data } = useQuery({ queryKey: ['health'], queryFn: () => api.get<{ missing?: string[] }>('/health'), staleTime: 5 * 60_000 });
+  const missing = data?.missing ?? [];
+  if (!missing.length) return null;
+  return (
+    <div className="mx-8 mt-5 flex items-start gap-3 rounded-lg border border-[#ecd9b3] bg-warn-bg px-3.5 py-2.5 text-[13px] text-[#7a4f10]">
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+      <div className="min-w-0">
+        <div className="font-medium">Creative Studio isn't connected to its database and file storage yet.</div>
+        <div className="mt-0.5">
+          Add these environment variables in your hosting settings, then redeploy: <span className="break-words font-mono text-[12px]">{missing.join(', ')}</span>. Steps are in docs/deploy.md.
+        </div>
+      </div>
     </div>
   );
 }

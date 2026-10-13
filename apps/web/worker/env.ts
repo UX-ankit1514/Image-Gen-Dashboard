@@ -1,8 +1,10 @@
 import { ctxOf, RestDb, serviceAccountTokens, type Ctx } from '@acs/firestore';
+import { AppError } from '@acs/shared';
 import { Storage } from '@acs/storage';
 
 export interface Env {
-  ASSETS: Fetcher;
+  /** Cloudflare only; on Vercel the CDN serves the SPA and this is absent. */
+  ASSETS?: Fetcher;
   API_LIMITER?: RateLimit;
   COMPANION_LIMITER?: RateLimit;
   FIRESTORE_PROJECT_ID: string;
@@ -24,10 +26,21 @@ export interface Env {
 
 interface RateLimit { limit(o: { key: string }): Promise<{ success: boolean }> }
 
+/** Settings the API cannot run without. The emulator needs no service account. */
+export function missingConfig(env: Partial<Env>): string[] {
+  const required: (keyof Env)[] = ['FIRESTORE_PROJECT_ID', 'STORAGE_ENDPOINT', 'STORAGE_BUCKET', 'STORAGE_ACCESS_KEY_ID', 'STORAGE_SECRET_ACCESS_KEY'];
+  if (!env.FIRESTORE_EMULATOR_HOST) required.push('GOOGLE_SA_EMAIL', 'GOOGLE_SA_KEY');
+  return required.filter((k) => !env[k]);
+}
+
 let cached: { key: string; db: RestDb; storage: Storage } | null = null;
 
 /** One client set per isolate; the service-account token is cached inside it. */
 export function clients(env: Env) {
+  const missing = missingConfig(env);
+  if (missing.length) {
+    throw new AppError('not_configured', "Creative Studio isn't connected to its database and file storage yet.", 503, `Missing settings: ${missing.join(', ')}`);
+  }
   const key = `${env.FIRESTORE_PROJECT_ID}|${env.FIRESTORE_EMULATOR_HOST}|${env.STORAGE_ENDPOINT}|${env.STORAGE_BUCKET}`;
   if (cached?.key === key) return cached;
   const db = new RestDb({

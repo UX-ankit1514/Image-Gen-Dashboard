@@ -39,6 +39,23 @@ Everything below is outward-facing and needs your accounts. Steps marked **you**
    ```
 6. Deploy: `npm run deploy:web` → prints `https://arnifi-creative-studio.<you>.workers.dev`.
 
+## 2b. Vercel instead of Cloudflare (app + API)
+
+The same app and API also run on Vercel; storage stays any S3-compatible bucket (R2 works) and the jobs
+stay on Firebase (section 1).
+
+* Project settings: **Root Directory `apps/web`**. `apps/web/vercel.json` sets the build
+  (`npm run build:vercel`), which writes `.vercel/output`: the SPA as static files, the API as one Node.js
+  function at `/api` (region `bom1`, next to Firestore in asia-south1), everything else → `index.html`.
+* Settings → Environment Variables (Production):
+  `FIRESTORE_PROJECT_ID`, `GOOGLE_SA_EMAIL`, `GOOGLE_SA_KEY` (the private key, `\n` escapes are fine),
+  `STORAGE_ENDPOINT`, `STORAGE_BUCKET`, `STORAGE_REGION` (`auto` for R2), `STORAGE_ACCESS_KEY_ID`,
+  `STORAGE_SECRET_ACCESS_KEY`, `TOKEN_KEY`. Redeploy after adding them. Until they are set, the app shows
+  which ones are missing.
+* Differences from the Worker: no Cloudflare Access gate in front (the URL is public; turn on Vercel
+  Deployment Protection), no Workers rate-limit binding, and request bodies are capped at 4.5 MB, so
+  uploads larger than that fail.
+
 ## 3. Cloudflare Access (no app login, but not public)
 
 **You:** Zero Trust → Access → Applications → *Self-hosted* → the workers.dev hostname (or your domain):

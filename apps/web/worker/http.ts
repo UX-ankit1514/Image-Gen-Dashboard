@@ -47,7 +47,7 @@ export const security: MiddlewareHandler<HonoEnv> = async (c, next) => {
   }
   const limiter = companion ? c.env.COMPANION_LIMITER : c.env.API_LIMITER;
   if (limiter && c.req.method !== 'GET') {
-    const key = c.req.header('cf-connecting-ip') ?? 'local';
+    const key = c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'local';
     const { success } = await limiter.limit({ key: `${companion ? 'c' : 'a'}:${key}` });
     if (!success) return c.json({ error: 'Too many requests. Wait a moment and try again.' }, 429);
   }

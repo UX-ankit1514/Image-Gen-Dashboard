@@ -4,5 +4,5 @@
     "types": ["@cloudflare/workers-types", "vite/client"],
     "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/**/*", "worker/**/*", "vite.config.ts"]
+  "include": ["src/**/*", "worker/**/*", "vercel/**/*", "vite.config.ts"]
 }
