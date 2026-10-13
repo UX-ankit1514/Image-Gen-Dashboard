@@ -112,19 +112,33 @@ interface WireJob { id: string; type: string; provider: 'claude' | 'openai'; tas
 async function runJob(cfg: Config, job: WireJob) {
   const provider = PROVIDERS[job.provider];
   const dir = mkdtempSync(join(tmpdir(), 'acs-job-'));
+  const stop = new AbortController();
   log(`▶ ${job.type} via ${job.provider === 'openai' ? 'ChatGPT' : 'Claude'} (${job.id})`);
   try {
     const images = await downloadImages(job.task.images, dir);
-    const result = await provider.run({ ...job.task, images });
-    for (const f of result.images ?? []) {
+    // Each variation goes up the moment it is made, so the dashboard can show it while the next one
+    // is still generating (four take ~7 minutes in total); whatever is left is sent when the run ends.
+    const sent = new Set<string>();
+    const upload = async (f: string) => {
+      if (sent.has(f)) return;
+      sent.add(f);
       const fd = new FormData();
       fd.append('file', new Blob([readFileSync(f)], { type: extname(f) === '.png' ? 'image/png' : extname(f) === '.webp' ? 'image/webp' : 'image/jpeg' }), basename(f));
       await call(cfg, `/companion/jobs/${job.id}/files`, fd);
       try { unlinkSync(f); } catch { /* temp */ }
-    }
+    };
+    // A run cancelled in the dashboard must stop the image in progress, not let it finish for nothing.
+    const watch = setInterval(() => {
+      call<{ cancelled: boolean }>(cfg, `/companion/jobs/${job.id}/state`).then((s) => { if (s.cancelled) stop.abort(); }).catch(() => { /* next tick */ });
+    }, 3000);
+    let result: Awaited<ReturnType<typeof provider.run>>;
+    try { result = await provider.run({ ...job.task, images }, stop.signal, upload); } finally { clearInterval(watch); }
+    if (stop.signal.aborted) { log(`■ ${job.id} cancelled`); return; }
+    for (const f of result.images ?? []) await upload(f);
     await call(cfg, `/companion/jobs/${job.id}/result`, { ok: true, json: result.json, text: result.text?.slice(0, 190_000) });
     log(`✓ ${job.id}${result.images?.length ? ` · ${result.images.length} image(s)` : ''}`);
   } catch (e) {
+    if (stop.signal.aborted) { log(`■ ${job.id} cancelled`); return; }
     const pe = e instanceof ProviderError ? e : null;
     await call(cfg, `/companion/jobs/${job.id}/result`, {
       ok: false, imageUnavailable: pe?.code === 'capability' && job.type === 'ai.image',

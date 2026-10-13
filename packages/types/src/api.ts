@@ -29,6 +29,10 @@ export const CreateProjectBody = z.object({
   layers: LayerToggles,
   provider: z.enum(['chatgpt', 'claude', 'auto', 'none']),
   brief: z.string().max(4000).optional(),
+  /** An uploaded gradient (a global asset) used as the gradient layer, and how it mixes with the photo. */
+  gradient: z.object({ assetId: z.string().min(1).max(64), mix: z.enum(['designed', 'tint', 'darken', 'soft']) }).optional(),
+  /** Which built-in brief and rules AI image requests use (see PHOTO_STYLES). */
+  photoStyle: z.enum(['corporate', 'documents', 'editorial']).optional(),
 });
 export type CreateProjectBody = z.infer<typeof CreateProjectBody>;
 
@@ -87,21 +91,22 @@ export type BatchAction = z.infer<typeof BatchAction>;
 export const BatchBody = z.object({
   cardIds: z.array(z.string()).max(1000),
   scope: Scope,
-  /** Approved cards are only changed when the user says so (PRD §57, Rule 9). */
+  /** No longer used: every card can be changed. */
   includeApproved: z.boolean().optional(),
   op: BatchAction,
 });
 export type BatchBody = z.infer<typeof BatchBody>;
 
 export const ExportBody = z.object({
-  scope: z.enum(['current', 'selected', 'approved', 'all']),
+  scope: z.enum(['current', 'selected', 'all']),
   cardIds: z.array(z.string()).max(1000).optional(),
   format: z.enum(['png', 'jpg', 'webp']),
   scale: z.number().min(0.25).max(4),
-  includeUnapproved: z.boolean(),
-  contactSheet: z.boolean(),
-  csv: z.boolean(),
-  manifest: z.boolean(),
+  /** Approval no longer gates Export: kept so older callers still validate. */
+  includeUnapproved: z.boolean().optional(),
+  contactSheet: z.boolean().optional(),
+  csv: z.boolean().optional(),
+  manifest: z.boolean().optional(),
   namingTemplate: z.string().max(200).optional(),
 });
 export type ExportBody = z.infer<typeof ExportBody>;

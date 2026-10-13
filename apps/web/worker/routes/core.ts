@@ -2,7 +2,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import {
-  activeJobs, approveCard, buildInbox, cancelJob, commitVersion, createBlankCard, createCardsFromPages, createExport,
+  activeJobs, approveCard, buildInbox, cancelBatch, cancelJob, commitVersion, createBlankCard, createCardsFromPages, createExport,
   createProject, duplicateCard, duplicateProject, getCard, getCardBundle, getProject, getRecipe, getRevision, getScan,
   listAssets, listCards, listExports, listPages, listProjects, listRecipes, listScans, listVersions, P, queueIngest,
   recentAudit, recomputeStats, rejectCard, renameCard, restoreVersion, retryFailed, retryJob, runBatch, saveDraft,
@@ -47,7 +47,7 @@ core.get('/bootstrap', async (c) => {
 
 core.patch('/workspace', async (c) => {
   const ctx = ctxFor(c.env);
-  const b = await body(c, z.object({ namingTemplate: z.string().max(200).optional(), defaultProvider: z.enum(['chatgpt', 'claude', 'auto', 'none']).optional() }));
+  const b = await body(c, z.object({ namingTemplate: z.string().max(200).optional(), defaultProvider: z.enum(['chatgpt', 'claude', 'auto', 'none']).optional(), exportFormat: z.enum(['png', 'jpg', 'webp']).optional() }));
   const ws = await ctx.db.get<Workspace>(P.workspace());
   if (!ws) throw notFound('workspace');
   const settings = { ...ws.settings, ...b };
@@ -290,14 +290,14 @@ async function upload(c: C, projectId: string | null) {
   // people upload PNG/JPG/WebP (PRD §16); imported runs may also hold AVIF/GIF, which ingest converts
   const allowed = purpose === 'import' || purpose === 'reference' ? [...UPLOAD_KINDS, 'avif', 'gif'] : UPLOAD_KINDS;
   if (!kind || !allowed.includes(kind)) throw invalid('That file type is not supported. Use PNG, JPG or WebP.');
-  const source = purpose === 'screenshot' ? 'screenshot' : purpose === 'logo' ? 'global' : purpose === 'import' ? 'import' : 'upload';
+  const source = purpose === 'screenshot' ? 'screenshot' : purpose === 'logo' || purpose === 'gradient' ? 'global' : purpose === 'import' ? 'import' : 'upload';
   const ctx = ctxFor(c.env);
   const id = newId('ast');
   const key = projectId ? projectKey(ctx.ws, projectId, purpose === 'reference' ? 'references' : 'uploaded', `${id}.${IMAGE_EXT[kind]}`) : `ws/${ctx.ws}/global/${id}.${IMAGE_EXT[kind]}`;
   await clients(c.env).storage.put(key, bytes, IMAGE_MIME[kind]);
   const name = (file.name || `${purpose}.${IMAGE_EXT[kind]}`).replace(/[^\w.\- ()&]+/g, '_').slice(0, 120);
   const asset = await createAssetDoc(ctx, {
-    id, projectId, type: purpose === 'screenshot' ? 'screenshot' : purpose === 'reference' ? 'reference' : purpose === 'logo' ? 'logo' : 'image',
+    id, projectId, type: purpose === 'screenshot' ? 'screenshot' : purpose === 'reference' ? 'reference' : purpose === 'logo' ? 'logo' : purpose === 'gradient' ? 'gradient' : 'image',
     source, role: null, sourcePageId: null, sourceUrl: null, name, storageKey: key, thumbKey: null, previewKey: null,
     width: 0, height: 0, mimeType: IMAGE_MIME[kind], bytes: bytes.length, sha256: null, dhash: null, inkScore: null, flags: {},
     analysis: null, status: 'pending', error: null,
@@ -341,6 +341,7 @@ core.get('/projects/:pid/jobs', async (c) => {
 
 core.post('/jobs/:jid/retry', async (c) => c.json(await retryJob(ctxFor(c.env), c.req.param('jid'))));
 core.post('/jobs/:jid/cancel', async (c) => c.json(await cancelJob(ctxFor(c.env), c.req.param('jid'))));
+core.post('/batches/:bid/cancel', async (c) => c.json(await cancelBatch(ctxFor(c.env), c.req.param('bid')) ?? { cancelled: 0 }));
 core.post('/batches/:bid/retry-failed', async (c) => c.json({ retried: await retryFailed(ctxFor(c.env), c.req.param('bid')) }));
 
 // ---------------------------------------------------------------- exports (PRD §67–69)

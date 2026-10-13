@@ -1,9 +1,8 @@
 /**
- * Heading / subheading (PRD §25–26, §94): content with provenance, typography, overflow with an
- * auto-fit that never goes below a readable size, and AI suggestions that never silently replace
- * the source copy.
+ * Heading / first line (PRD §25–26, §94): the text, typography, and overflow with an auto-fit that
+ * never goes below a readable size.
  */
-import { AlignCenter, AlignLeft, AlignRight, Link2, Link2Off, RotateCcw, Scissors, Sparkles, Wand2 } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, Link2, Link2Off, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CardWarning, TextLayer } from '@acs/types';
 import { effectiveFontSize, LEGACY_LADDER, minReadable } from '@acs/renderer';
@@ -13,10 +12,6 @@ import { useEditorCtx } from '../context';
 import { Badge, Button, ColorField, NumberField, Segmented, Select, Switch, Textarea, Tip } from '../../ui';
 import { Grid2, Row, Section } from './parts';
 
-const PROV: Record<string, string> = {
-  'website-h1': 'Website H1', 'page-highlight': 'Page highlight', 'page-benefit': 'Page benefit', 'page-title': 'Page details',
-  ai: 'AI suggestion', manual: 'Manual', imported: 'Imported from a previous run',
-};
 const FONTS = [
   { value: 'Lora', label: 'Lora' }, { value: 'Inter', label: 'Inter' }, { value: 'Georgia', label: 'Georgia' },
   { value: 'Helvetica Neue', label: 'Helvetica Neue' }, { value: 'serif', label: 'System serif (legacy)' }, { value: 'sans-serif', label: 'System sans (legacy)' },
@@ -52,7 +47,7 @@ export function TextInspector({ layer, warnings }: { layer: TextLayer; warnings:
   const lines = ctx.boxes[layer.id]?.lines ?? 1;
   const overflow = !!layer.text && lines > layer.maxLines;
   const original = layer.provenance.original;
-  const role = layer.role === 'headline' ? 'Heading' : layer.role === 'subheading' ? 'Subheading' : 'Text';
+  const role = layer.role === 'headline' ? 'Heading' : layer.role === 'subheading' ? 'First line' : 'Text';
   const page = ctx.bundle.page;
 
   const autoFit = () => {
@@ -74,27 +69,16 @@ export function TextInspector({ layer, warnings }: { layer: TextLayer; warnings:
         <Textarea id={`text-${layer.id}`} rows={layer.role === 'headline' ? 3 : 2} value={layer.text}
           onChange={(e) => set({ text: e.target.value, provenance: { ...layer.provenance, kind: e.target.value === original ? layer.provenance.kind : 'manual' } }, `text:${layer.id}`)}
           onBlur={() => useEditor.getState().checkpoint()} />
-        <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted">
-          <span>Source:</span><Badge tone={layer.provenance.kind === 'manual' ? 'neutral' : layer.provenance.kind === 'ai' ? 'info' : 'ok'}>{PROV[layer.provenance.kind] ?? layer.provenance.kind}</Badge>
-        </div>
         {original && original !== layer.text ? (
           <div className="rounded-md bg-hover px-2.5 py-2 text-[12px]">
             <div className="text-muted">Original</div>
             <div className="mt-0.5">{original}</div>
           </div>
         ) : null}
-        <div className="grid grid-cols-2 gap-1.5">
-          <Button size="sm" icon={<RotateCcw className="size-3.5" />} disabled={!original || original === layer.text}
+        {original && original !== layer.text ? (
+          <Button size="sm" icon={<RotateCcw className="size-3.5" />}
             onClick={() => set({ text: original!, provenance: { ...layer.provenance, kind: layer.role === 'headline' ? 'website-h1' : layer.provenance.kind === 'manual' || layer.provenance.kind === 'ai' ? 'page-highlight' : layer.provenance.kind } })}>Use original</Button>
-          <Tip label={ctx.aiAvailable.text ? 'A shorter version, as a suggestion' : 'Connect ChatGPT or Claude to use AI'}>
-            <span><Button size="sm" className="w-full" icon={<Scissors className="size-3.5" />} disabled={!ctx.aiAvailable.text || !layer.text}
-              onClick={() => ctx.runAi(`Shorten the ${layer.role} so it fits in ${layer.maxLines} line${layer.maxLines > 1 ? 's' : ''} without losing its meaning.`, { layerId: layer.id, intentHint: 'EDIT_COPY' })}>Shorten with AI</Button></span>
-          </Tip>
-          <Tip label={ctx.aiAvailable.text ? 'An alternative line, as a suggestion' : 'Connect ChatGPT or Claude to use AI'}>
-            <span className="col-span-2"><Button size="sm" className="w-full" icon={<Wand2 className="size-3.5" />} disabled={!ctx.aiAvailable.text}
-              onClick={() => ctx.runAi(`Rewrite the ${layer.role} using the page's own facts.`, { layerId: layer.id, intentHint: 'EDIT_COPY' })}>Rewrite</Button></span>
-          </Tip>
-        </div>
+        ) : null}
         {layer.role === 'subheading' && page?.highlights?.length ? (
           <details className="text-[12px]">
             <summary className="cursor-pointer text-muted">Page highlights ({page.highlights.length})</summary>
@@ -111,7 +95,6 @@ export function TextInspector({ layer, warnings }: { layer: TextLayer; warnings:
             <span>{role} runs to {lines} lines (max {layer.maxLines}).</span>
             <div className="flex gap-1.5">
               <Button size="sm" onClick={autoFit}>Auto fit</Button>
-              {ctx.aiAvailable.text ? <Button size="sm" icon={<Sparkles className="size-3.5" />} onClick={() => ctx.runAi(`Shorten the ${layer.role} to fit ${layer.maxLines} line(s).`, { layerId: layer.id, intentHint: 'EDIT_COPY' })}>Shorten with AI</Button> : null}
               <Button size="sm" onClick={() => document.getElementById(`text-${layer.id}`)?.focus()}>Edit manually</Button>
             </div>
           </div>

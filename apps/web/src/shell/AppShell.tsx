@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router';
-import { AlertTriangle, Download, FolderKanban, Images, Inbox, LayoutTemplate, Plus, Settings, Sparkles } from 'lucide-react';
+import { AlertTriangle, FolderKanban, Plus, Settings, Sparkles } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { cx } from '../ui';
@@ -7,16 +7,11 @@ import { cx } from '../ui';
 const NAV = [
   { to: '/', label: 'Projects', icon: FolderKanban, end: true },
   { to: '/new', label: 'Create', icon: Plus },
-  { to: '/review', label: 'Review', icon: Inbox },
-  { to: '/assets', label: 'Assets', icon: Images },
-  { to: '/templates', label: 'Templates', icon: LayoutTemplate },
   { to: '/connections', label: 'AI Connections', icon: Sparkles },
-  { to: '/exports', label: 'Exports', icon: Download },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
 export function AppShell() {
-  const inbox = useQuery({ queryKey: ['inbox-count'], queryFn: () => api.get<unknown[]>('/inbox'), refetchInterval: 60_000, select: (d) => d.length });
   return (
     <div className="flex h-full">
       <aside className="flex w-[208px] shrink-0 flex-col border-r border-line bg-panel">
@@ -36,7 +31,6 @@ export function AppShell() {
             >
               <Icon className="size-4" strokeWidth={1.75} />
               <span className="flex-1">{label}</span>
-              {label === 'Review' && inbox.data ? <span className="rounded-full bg-[#ececec] px-1.5 text-[10.5px] text-muted tabular-nums">{inbox.data}</span> : null}
             </NavLink>
           ))}
         </nav>

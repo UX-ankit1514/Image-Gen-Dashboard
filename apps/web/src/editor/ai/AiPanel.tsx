@@ -1,27 +1,16 @@
-/** AI actions in the inspector (PRD §18): what the connected subscription can do here, capability-gated. */
+/** The two things you do to a background from anywhere in the editor: generate one, or bring your own. */
 import { Link } from 'react-router';
-import { Eye, Sparkles, Wand2 } from 'lucide-react';
+import { ImagePlus, Sparkles } from 'lucide-react';
 import { useEditorCtx } from '../context';
-import { Badge, Button, SectionTitle, Tip } from '../../ui';
+import { Button } from '../../ui';
 
 export function AiPanel() {
   const ctx = useEditorCtx();
-  const a = ctx.aiAvailable;
   return (
-    <section className="mt-auto border-t border-line px-4 pt-2 pb-4">
-      <SectionTitle action={a.planLabel ? <Badge>{a.planLabel}</Badge> : null}>AI actions</SectionTitle>
-      {!a.text && !a.image ? (
-        <div className="text-[12.5px] text-muted">No AI connected. Everything here still works by hand. <Link to="/connections" className="text-ink underline">Connect ChatGPT or Claude</Link>, no API key needed.</div>
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          <Button size="sm" icon={<Eye className="size-3.5" />} disabled={!a.vision} onClick={() => ctx.runAi('Review this card: what would you change and why?', { intentHint: 'ANALYZE_CARD' })}>Critique this card</Button>
-          <Tip label={a.image ? 'Generate background variations from the project context' : 'Image generation unavailable on this connection'}>
-            <span><Button size="sm" className="w-full" icon={<Sparkles className="size-3.5" />} disabled={!a.image} onClick={() => ctx.runAi('', { intentHint: 'GENERATE_VARIATIONS' })}>Generate background</Button></span>
-          </Tip>
-          <Button size="sm" icon={<Wand2 className="size-3.5" />} disabled={!a.text} onClick={() => ctx.runAi('', { intentHint: 'PROMPT' })}>Ask for a change…</Button>
-          {!a.image ? <div className="text-[11.5px] text-faint">Image generation: unavailable on {a.provider === 'claude' ? 'Claude' : 'this connection'}.</div> : null}
-        </div>
-      )}
+    <section className="mt-auto flex flex-col gap-1.5 border-t border-line px-4 py-4">
+      <Button className="w-full" icon={<Sparkles className="size-3.5" />} disabled={!ctx.canGenerate} onClick={ctx.generateBackground}>Generate background</Button>
+      <Button className="w-full" icon={<ImagePlus className="size-3.5" />} onClick={() => ctx.pickImage('background')}>Replace background</Button>
+      {!ctx.canGenerate ? <div className="mt-1 text-[12px] text-muted">Generating needs ChatGPT. <Link to="/connections" className="text-ink underline">Connect it</Link>, no API key needed.</div> : null}
     </section>
   );
 }

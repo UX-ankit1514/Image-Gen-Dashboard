@@ -130,6 +130,13 @@
   }
 }
 
+/* The listing preview's DialKit panel: its values are shared and never saved as versions, so the
+   version menu and copy button would only be noise. Unlayered, like dialkit/styles.css, or it loses. */
+.dialkit-host .dialkit-panel-toolbar,
+.dialkit-host .dialkit-panel-section-toolbar-clip {
+  display: none;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .hoverable:hover {
     background-color: var(--color-hover);

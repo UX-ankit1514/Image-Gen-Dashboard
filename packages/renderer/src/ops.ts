@@ -3,7 +3,7 @@
  * AI patches (§23). Each one changes the smallest part of the design it is about (§31).
  */
 import type { BackgroundLayer, BackgroundSource, Design, Fill, GradientLayer, GradientPatch, Layer, LinearFill, Stop, TextLayer } from '@acs/types';
-import { presetById, presetFills } from './presets';
+import { CUSTOM_GRADIENT_PRESET, customGradientFills, PHOTO_NEUTRAL, presetById, presetFills, type GradientMix } from './presets';
 import { getLayer, updateLayer } from './resolve';
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -51,6 +51,17 @@ export function applyGradientPreset(d: Design, presetId: string, withPhotoGrade 
   let out = updateLayer(d, g.id, { preset: presetId, fills: presetFills(presetId), visible: presetId !== 'none' ? true : g.visible } as Partial<GradientLayer>);
   const bg = out.layers.find((l) => l.type === 'background') as BackgroundLayer | undefined;
   if (withPhotoGrade && bg && preset.photoAdjust) out = updateLayer(out, bg.id, { adjust: { ...preset.photoAdjust } } as Partial<BackgroundLayer>);
+  return out;
+}
+
+/** Uses an uploaded gradient image (an asset id) as the gradient, mixed into the photo as chosen.
+ *  The photo goes back to neutral: the gradient carries the look. */
+export function applyCustomGradient(d: Design, src: string, mix: GradientMix): Design {
+  const g = gradientLayerOf(d);
+  if (!g) return d;
+  let out = updateLayer(d, g.id, { preset: CUSTOM_GRADIENT_PRESET, fills: customGradientFills(src, mix), visible: true } as Partial<GradientLayer>);
+  const bg = out.layers.find((l) => l.type === 'background') as BackgroundLayer | undefined;
+  if (bg && g.preset !== CUSTOM_GRADIENT_PRESET) out = updateLayer(out, bg.id, { adjust: { ...PHOTO_NEUTRAL } } as Partial<BackgroundLayer>);
   return out;
 }
 

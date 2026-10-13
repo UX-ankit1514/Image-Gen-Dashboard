@@ -79,7 +79,7 @@ export interface Workspace {
   name: string;
   /** No auth in V1 (Cloudflare Access gates the app); roles are modelled for later (PRD §79). */
   members: Record<string, Role>;
-  settings: { namingTemplate: string; defaultProvider: ProviderChoice };
+  settings: { namingTemplate: string; defaultProvider: ProviderChoice; /** What Export downloads (default jpg, as the shipped cards were). */ exportFormat?: 'png' | 'jpg' | 'webp' };
   createdAt: Iso;
 }
 
@@ -235,7 +235,7 @@ export interface Feedback {
   createdAt: Iso;
 }
 
-export type AssetType = 'image' | 'logo' | 'reference' | 'preview' | 'export' | 'screenshot';
+export type AssetType = 'image' | 'logo' | 'reference' | 'preview' | 'export' | 'screenshot' | 'gradient';
 export type AssetSource = 'website' | 'upload' | 'generated' | 'screenshot' | 'render' | 'import' | 'global';
 
 export interface AssetFlags {
@@ -245,6 +245,8 @@ export interface AssetFlags {
   containsText?: boolean | null;   // null = not checked (needs AI vision)
   containsLogo?: boolean | null;
   aspectMismatch?: boolean;
+  /** The stored file has see-through pixels (PNG/WebP alpha); set at ingest. */
+  hasAlpha?: boolean;
 }
 
 export interface Asset {
@@ -324,6 +326,8 @@ export interface Batch {
   total: number;
   completed: number;
   failed: number;
+  /** Jobs stopped on purpose; they are neither done nor failed. */
+  cancelled?: number;
   status: 'running' | 'completed' | 'partial' | 'failed' | 'cancelled';
   jobIds: string[];
   createdAt: Iso;

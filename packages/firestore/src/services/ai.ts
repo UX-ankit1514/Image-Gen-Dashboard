@@ -18,7 +18,7 @@ import { P } from '../paths';
 import { audit } from './audit';
 import { commitVersion, designOfVersion, getCard, revisionCached } from './cards';
 import type { Ctx } from './context';
-import { completeJob, enqueue, enqueueBatch, failJob, pauseJob } from './jobs';
+import { appendToBatch, completeJob, enqueue, enqueueBatch, failJob, pauseJob } from './jobs';
 import { getProject } from './projects';
 import { getRecipe } from './recipes';
 
@@ -195,6 +195,10 @@ export interface GenerateInput {
   mode: 'generate' | 'edit';
   provider?: string | null;
   autoUse: boolean;
+  /** Always group the jobs in a batch, even one, so the review screen can follow the run. */
+  review?: boolean;
+  /** Add the jobs to this batch instead of starting a new one (a card generated again from review). */
+  batchId?: string | null;
   /** asset id → signed URL, for edit mode and references (signed by the caller, which owns storage). */
   urls: Record<string, string>;
 }
@@ -235,7 +239,8 @@ export async function createGenerateJobs(ctx: Ctx, projectId: string, input: Gen
     jobs.push({ type: 'ai.image' as const, executor: 'companion' as const, cardId, provider: conn.provider,
       input: { task, post, provider: conn.provider, meta: { cardId, projectId, autoUse: input.autoUse, request: input.prompt, composedPrompt: prompt, assetIds: [] } } });
   }
-  if (jobs.length === 1) return { batchId: null, jobs: [await enqueue(ctx, { ...jobs[0], projectId })] };
+  if (input.batchId) return { batchId: input.batchId, jobs: await appendToBatch(ctx, input.batchId, jobs) };
+  if (jobs.length === 1 && !input.review) return { batchId: null, jobs: [await enqueue(ctx, { ...jobs[0], projectId })] };
   const { batch, jobs: docs } = await enqueueBatch(ctx, projectId, 'generate', `Generating ${jobs.length} backgrounds`, jobs);
   await audit(ctx, 'batch.started', 'project', projectId, { action: 'generate', cards: jobs.length, provider: conn.provider });
   return { batchId: batch.id, jobs: docs };

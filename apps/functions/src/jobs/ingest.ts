@@ -36,6 +36,7 @@ export async function ingest(ctx: Ctx, job: Job) {
   ]);
 
   const flags: Asset['flags'] = { ...asset.flags, ...flagsFor(a, project ? { width: project.width, height: project.height } : undefined) };
+  flags.hasAlpha = a.hasAlpha;
   // duplicate detection by hash and perceptual hash (PRD §47)
   if (asset.projectId) {
     const siblings = await ctx.db.query<Asset>(P.assets, { where: [['projectId', '==', asset.projectId]] });

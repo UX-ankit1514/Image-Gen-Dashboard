@@ -46,6 +46,7 @@ export async function runBatch(ctx: Ctx, projectId: string, body: BatchBody) {
     ? all.filter((c) => c.status !== 'archived')
     : all.filter((c) => body.cardIds.includes(c.id));
   const op = body.op;
+  // no card is protected any more (approval is gone from the app); skippedApproved stays in the reply for older callers
   const result = { changed: 0, skippedApproved: 0, cards: [] as string[] };
 
   // status-only actions
@@ -70,7 +71,6 @@ export async function runBatch(ctx: Ctx, projectId: string, body: BatchBody) {
     else newBase = (await transformFor(ctx, op, project))!(rev.base);
     const nextRev = await setProjectBase(ctx, project, newBase, `Project default: ${reason}`);
     for (const c of targets) {
-      if ((c.status === 'approved' || c.status === 'exported') && !body.includeApproved) { result.skippedApproved++; continue; }
       const cur = c.currentVersionId ? await getVersion(ctx, projectId, c.id, c.currentVersionId) : null;
       let overrides = c.draft ?? cur?.overrides ?? {};
       if (op.action === 'resize') {
@@ -88,7 +88,6 @@ export async function runBatch(ctx: Ctx, projectId: string, body: BatchBody) {
 
   const transform = op.action === 'patch' ? null : await transformFor(ctx, op, project);
   for (const c of targets) {
-    if ((c.status === 'approved' || c.status === 'exported') && !body.includeApproved) { result.skippedApproved++; continue; }
     const fresh = await getCard(ctx, projectId, c.id);
     const cur = fresh.currentVersionId ? await getVersion(ctx, projectId, c.id, fresh.currentVersionId) : null;
     const revId = fresh.draftRev ?? cur?.defaultsRev ?? project.defaultsRev;

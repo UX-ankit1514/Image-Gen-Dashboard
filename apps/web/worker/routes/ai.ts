@@ -15,7 +15,7 @@ import { analysisTask, authorizeUrl, exchangeCode, oauthConfig, revokeToken, typ
 import { decryptJson, encryptJson, IMAGE_EXT, IMAGE_MIME, invalid, MAX_UPLOAD_BYTES, newId, notFound, nowIso, pkcePair, randomToken, sniffImage, UPLOAD_KINDS } from '@acs/shared';
 import { enqueue } from '@acs/firestore';
 import { projectKey } from '@acs/storage';
-import { Scope, type Asset, type Card, type Job, type ProviderConnection } from '@acs/types';
+import { Scope, type Asset, type Batch, type Card, type Job, type ProviderConnection } from '@acs/types';
 import { clients, ctxFor } from '../env';
 import { body, type C, type HonoEnv } from '../http';
 
@@ -125,11 +125,29 @@ ai.post('/ai/generate', async (c) => {
   const b = await body(c, z.object({
     projectId: z.string(), cardIds: z.array(z.string()).min(1).max(200), prompt: z.string().max(4000), variations: z.number().int().min(1).max(4),
     mode: z.enum(['generate', 'edit']), provider: z.enum(['openai', 'claude']).optional(), autoUse: z.boolean(),
+    review: z.boolean().optional(), batchId: z.string().max(64).optional(),
   }));
   const ctx = ctxFor(c.env);
   const cards = (await ctx.db.getMany<Card>(b.cardIds.map((id) => P.card(b.projectId, id)))).filter(Boolean) as Card[];
   const urls = b.mode === 'edit' ? await assetUrlsFor(c, cards.map((x) => x.backgroundAssetId).filter(Boolean) as string[]) : {};
   return c.json(await createGenerateJobs(ctx, b.projectId, { ...b, urls }), 201);
+});
+
+/** A generation run for the review screen: each job with its card, the prompt it was given and the
+ *  images it made so far. Nothing here is applied to a card until the person picks it. */
+ai.get('/batches/:bid/generation', async (c) => {
+  const ctx = ctxFor(c.env);
+  const batch = await ctx.db.get<Batch>(P.batch(c.req.param('bid')));
+  if (!batch || batch.kind !== 'generate') throw notFound('generation run');
+  const jobs = (await ctx.db.getMany<Job>(batch.jobIds.map((id) => P.job(id)))).filter(Boolean) as Job[];
+  return c.json({
+    batch,
+    jobs: jobs.map(({ input, ...j }) => {
+      const meta = ((input as { meta?: Record<string, unknown> })?.meta ?? {}) as { request?: string; composedPrompt?: string; assetIds?: string[] };
+      const out = j.output as { assetIds?: string[] } | null;
+      return { ...j, request: meta.request ?? '', prompt: meta.composedPrompt ?? '', assetIds: out?.assetIds ?? meta.assetIds ?? [] };
+    }),
+  });
 });
 
 ai.post('/ai/compose', async (c) => {
@@ -218,6 +236,15 @@ ai.post('/companion/jobs/next', async (c) => {
     return c.json({ job: null });
   }
   return c.json({ job: { id: job.id, type: job.type, provider, task: (job.input as { task: AiTask }).task } });
+});
+
+/** The companion asks while a job runs: a run cancelled from the dashboard stops the image in progress. */
+ai.post('/companion/jobs/:jid/state', async (c) => {
+  const d = await device(c);
+  const ctx = ctxFor(c.env, `device:${d.id}`);
+  const job = await ctx.db.get<Job>(P.job(c.req.param('jid')));
+  if (!job || job.claimedBy !== d.id) throw invalid('That job is not running on this companion.');
+  return c.json({ cancelled: job.status === 'cancelled' });
 });
 
 ai.post('/companion/jobs/:jid/files', async (c) => {

@@ -1,7 +1,7 @@
 /** Projects / campaigns (PRD §9, §11–12). */
-import { applyOverrides, buildRecipe, diffOverrides, RECIPES } from '@acs/renderer';
+import { applyCustomGradient, applyOverrides, buildRecipe, diffOverrides, PHOTO_STYLES, RECIPES } from '@acs/renderer';
 import { DEFAULT_NAMING, invalid, newId, notFound, nowIso, slugify } from '@acs/shared';
-import type { Card, CreateProjectBody, DefaultsRevision, Design, LayerToggles, Overrides, Project, ProjectStats } from '@acs/types';
+import type { Asset, Card, CreateProjectBody, DefaultsRevision, Design, LayerToggles, Overrides, Project, ProjectStats } from '@acs/types';
 import type { WriteOp } from '../db';
 import { P } from '../paths';
 import { audit } from './audit';
@@ -30,11 +30,18 @@ export async function createProject(ctx: Ctx, body: CreateProjectBody) {
   const t = nowIso();
   const id = newId('prj');
   const recipeBase = recipeAtSize(recipe, body.width, body.height);
-  const base = withToggles(recipeBase, body.layers);
+  let base = withToggles(recipeBase, body.layers);
+  if (body.gradient) {
+    const asset = await ctx.db.get<Asset>(P.asset(body.gradient.assetId));
+    if (!asset || asset.type !== 'gradient') throw invalid('That gradient is no longer in the library.');
+    base = applyCustomGradient(base, asset.id, body.gradient.mix);
+    if (!body.layers.gradient) base = withToggles(base, body.layers);
+  }
+  const style = body.photoStyle ? await getRecipe(ctx, PHOTO_STYLES.find((s) => s.id === body.photoStyle)!.recipeId) : null;
   const rev: DefaultsRevision = { id: newId('rev'), projectId: id, base, reason: 'Project created', createdAt: t };
   const project: Project = {
     id, workspaceId: ctx.ws, name: body.name.trim(), slug: slugify(body.name), description: body.description ?? '',
-    recipeId: recipe.id, brief: body.brief ?? recipe.brief ?? '', negativeConstraints: recipe.negativeConstraints ?? [],
+    recipeId: recipe.id, brief: body.brief ?? style?.brief ?? recipe.brief ?? '', negativeConstraints: style?.negativeConstraints ?? recipe.negativeConstraints ?? [],
     rules: [], defaults: diffOverrides(recipeBase, base), defaultsRev: rev.id, width: body.width, height: body.height,
     status: 'active', provider: body.provider, namingTemplate: DEFAULT_NAMING, stats: { ...ZERO_STATS }, coverThumbs: [],
     exportStatus: 'none', lastExportAt: null, inputType: body.inputType, createdAt: t, updatedAt: t, lastEditedAt: t,

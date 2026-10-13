@@ -1,7 +1,7 @@
 /** Request plumbing: validation, errors as sentences (PRD §81), CSRF + rate limiting (PRD §78). */
 import type { Context, MiddlewareHandler } from 'hono';
 import type { z } from 'zod';
-import { FirestoreError, NeedsConfirmation } from '@acs/firestore';
+import { FirestoreError } from '@acs/firestore';
 import { AppError, friendly, invalid } from '@acs/shared';
 import type { Env } from './env';
 
@@ -24,9 +24,6 @@ export async function body<T extends z.ZodType>(c: C, schema: T): Promise<z.infe
 }
 
 export function onError(err: Error, c: C) {
-  if (err instanceof NeedsConfirmation) {
-    return c.json({ error: err.message, needsConfirm: true, unapproved: err.unapproved, total: err.total }, 409);
-  }
   if (err instanceof AppError) {
     if (err.detail) console.warn(err.code, err.detail);
     return c.json({ error: err.userMessage, code: err.code }, err.status as 400);

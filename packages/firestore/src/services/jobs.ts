@@ -6,7 +6,7 @@
  */
 import { detailOf, friendly, newId, nowIso } from '@acs/shared';
 import type { Batch, Job, JobStatus, JobType } from '@acs/types';
-import { inc, type Db, type WriteOp } from '../db';
+import { commitAll, inc, type Db, type WriteOp } from '../db';
 import { P } from '../paths';
 import type { Ctx } from './context';
 
@@ -52,6 +52,20 @@ export async function enqueueBatch(ctx: Ctx, projectId: string, kind: string, la
   return { batch, jobs: docs };
 }
 
+/** Adds jobs to an existing batch (a card generated again from the review screen), so the batch
+ *  stays the one record of that run and its progress counts the new job too. */
+export async function appendToBatch(ctx: Ctx, batchId: string, jobs: NewJob[]) {
+  const docs = await ctx.db.transaction(async (tx) => {
+    const b = await tx.get<Batch>(P.batch(batchId));
+    if (!b) throw new Error(`batch ${batchId} missing`);
+    const made = jobs.map((j) => makeJob(ctx, { ...j, batchId, projectId: b.projectId }));
+    tx.update(P.batch(batchId), { jobIds: [...b.jobIds, ...made.map((d) => d.id)].slice(-1000), total: b.total + made.length, status: 'running', updatedAt: nowIso() });
+    return made;
+  });
+  await ctx.db.commit(docs.map(jobOp));
+  return docs;
+}
+
 export async function getJob(db: Db, id: string) {
   return db.get<Job>(P.job(id));
 }
@@ -64,12 +78,17 @@ export async function setJobStatus(db: Db, id: string, status: JobStatus, extra:
   await db.update(P.job(id), patch);
 }
 
+function batchStatus(b: Batch): Batch['status'] {
+  const cancelled = b.cancelled ?? 0;
+  if (b.completed + b.failed + cancelled < b.total) return 'running';
+  if (cancelled) return 'cancelled';
+  return b.failed === 0 ? 'completed' : b.completed === 0 ? 'failed' : 'partial';
+}
+
 async function settleBatch(db: Db, batchId: string, field: 'completed' | 'failed') {
   await db.update(P.batch(batchId), { [field]: inc(1), updatedAt: nowIso() });
   const b = await db.get<Batch>(P.batch(batchId));
-  if (b && b.completed + b.failed >= b.total) {
-    await db.update(P.batch(batchId), { status: b.failed === 0 ? 'completed' : b.completed === 0 ? 'failed' : 'partial' });
-  }
+  if (b && b.completed + b.failed + (b.cancelled ?? 0) >= b.total) await db.update(P.batch(batchId), { status: batchStatus(b) });
 }
 
 export async function completeJob(db: Db, job: Job, output: Record<string, unknown> = {}) {
@@ -109,6 +128,21 @@ export async function cancelJob(ctx: Ctx, id: string) {
   await setJobStatus(ctx.db, id, 'cancelled');
   if (job.batchId) await settleBatch(ctx.db, job.batchId, 'failed');
   return { ...job, status: 'cancelled' as const };
+}
+
+/** Stops a whole run. Whatever is not finished is cancelled and the companion drops the one in
+ *  progress; images that were already made stay on their jobs, and cancelled jobs are not failures. */
+export async function cancelBatch(ctx: Ctx, batchId: string) {
+  const batch = await ctx.db.get<Batch>(P.batch(batchId));
+  if (!batch) return null;
+  const open = ((await ctx.db.getMany<Job>(batch.jobIds.map((id) => P.job(id)))).filter(Boolean) as Job[])
+    .filter((j) => ['queued', 'preparing', 'running', 'paused'].includes(j.status));
+  const t = nowIso();
+  await commitAll(ctx.db, open.map((j) => ({ kind: 'update' as const, path: P.job(j.id), data: { status: 'cancelled', updatedAt: t, endedAt: t, resumeAt: null, pausedReason: null } })));
+  if (open.length) await ctx.db.update(P.batch(batchId), { cancelled: inc(open.length), updatedAt: t });
+  const fresh = await ctx.db.get<Batch>(P.batch(batchId));
+  if (fresh) await ctx.db.update(P.batch(batchId), { status: batchStatus(fresh) });
+  return { cancelled: open.length };
 }
 
 export async function activeJobs(db: Db, projectId: string) {

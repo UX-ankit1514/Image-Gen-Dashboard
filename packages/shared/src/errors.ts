@@ -17,6 +17,7 @@ export const notFound = (what: string) => new AppError('not_found', `We couldn't
 export const invalid = (msg: string, detail?: string) => new AppError('invalid', msg, 400, detail);
 
 const RULES: [RegExp, string][] = [
+  [/connection closed|target closed|session closed|browser (has disconnected|is not connected)/i, 'The preview renderer stopped unexpectedly. Retry to render it again.'],
   [/ECONNRESET|ECONNREFUSED|socket hang up|fetch failed|network/i, "We couldn't retrieve this page."],
   [/ETIMEDOUT|timeout|timed out|AbortError/i, 'The page took too long to respond.'],
   [/ENOTFOUND|EAI_AGAIN|getaddrinfo/i, "That address doesn't resolve. Check the link."],

@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { createBrowserRouter, RouterProvider } from 'react-router';
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 import { Toaster } from 'sonner';
 import './styles.css';
 import { queryClient } from './lib/api';
@@ -12,13 +12,11 @@ import { NewProjectPage } from './pages/NewProject';
 import { WorkspacePage } from './pages/Workspace';
 import { ScanPage } from './pages/Scan';
 import { EditorPage } from './editor/EditorPage';
-import { ReviewPage } from './pages/Review';
-import { AssetsPage } from './pages/Assets';
-import { TemplatesPage } from './pages/Templates';
 import { ConnectionsPage } from './pages/Connections';
-import { ExportsPage } from './pages/Exports';
 import { SettingsPage } from './pages/Settings';
 import { NotFound } from './pages/NotFound';
+import { GenerateReviewPage, GenerateStartPage } from './pages/GenerateReview';
+import { ExportPage } from './pages/ExportPage';
 
 const router = createBrowserRouter([
   { path: '/p/:pid/c/:cid', element: <EditorPage /> },
@@ -29,11 +27,12 @@ const router = createBrowserRouter([
       { path: '/new', element: <NewProjectPage /> },
       { path: '/p/:pid', element: <WorkspacePage /> },
       { path: '/p/:pid/scan/:sid', element: <ScanPage /> },
-      { path: '/review', element: <ReviewPage /> },
-      { path: '/assets', element: <AssetsPage /> },
-      { path: '/templates', element: <TemplatesPage /> },
+      { path: '/p/:pid/generate', element: <GenerateStartPage /> },
+      { path: '/p/:pid/generate/:bid', element: <GenerateReviewPage /> },
+      { path: '/p/:pid/export', element: <ExportPage /> },
       { path: '/connections', element: <ConnectionsPage /> },
-      { path: '/exports', element: <ExportsPage /> },
+      // retired pages: old links land on the projects
+      ...['/review', '/assets', '/templates', '/exports'].map((path) => ({ path, element: <Navigate to="/" replace /> })),
       { path: '/settings', element: <SettingsPage /> },
       { path: '*', element: <NotFound /> },
     ],

@@ -4,16 +4,20 @@
  * anything: "Use" makes a new version. Disabled, with alternatives, when no connected provider can
  * generate images (capability flag imageGeneration = false).
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Bookmark, Check, ImageOff, Loader2, Pencil, RefreshCw, Sparkles, ThumbsDown } from 'lucide-react';
+import { Bookmark, Check, ImageOff, Loader2, MonitorSmartphone, Pencil, RefreshCw, Sparkles } from 'lucide-react';
+import { replaceBackground } from '@acs/renderer';
 import type { Job } from '@acs/types';
 import { api } from '../../lib/api';
 import { plural } from '../../lib/format';
 import { useProject } from '../../lib/queries';
-import type { AssetX } from '../../lib/types';
+import type { AssetX, CardBundle } from '../../lib/types';
+import { builtinUrl } from '../../lib/builtins';
+import { LazyListingPreview, type PreviewItem } from '../../listing';
+import { useEditor } from '../store';
 import { Badge, Button, Dialog, Field, Segmented, Textarea } from '../../ui';
 import { Thumb } from '../../components/Thumb';
 import { pickProvider, planLabel, useConnections, waitForJob } from './useAi';
@@ -37,6 +41,30 @@ export function GenerateDialog({ open, onOpenChange, projectId, cardIds, initial
   const [phase, setPhase] = useState<'form' | 'running' | 'results'>('form');
   const [fullPrompt, setFullPrompt] = useState<string | null>(null);
   const [limit, setLimit] = useState<{ provider: string; resetAt: string | null } | null>(null);
+  const [siteFocus, setSiteFocus] = useState<string | undefined>();
+
+  // each variation in this card's design, as "Use" would make it, for the arnifi.com listing preview
+  const { data: cardBundle } = useQuery({
+    queryKey: ['card', cardIds[0]], enabled: open && single, refetchOnWindowFocus: false,
+    queryFn: () => api.get<CardBundle>(`/projects/${projectId}/cards/${cardIds[0]}`),
+  });
+  const siteItems = useMemo((): PreviewItem[] => {
+    if (!single || !cardBundle) return [];
+    const live = useEditor.getState();
+    const base = live.cardId === cardIds[0] && live.design ? live.design : cardBundle.design;
+    const known = new Map(cardBundle.assets.map((a) => [a.id, a]));
+    const variations = runs.flatMap((r) => r.assets.map((a, i) => ({ a, i }))).filter(({ a }) => a.status === 'ready' && a.url);
+    for (const { a } of variations) known.set(a.id, a);
+    const resolveSrc = (ref: string) => {
+      if (ref.startsWith('builtin:')) return builtinUrl(ref);
+      const a = known.get(ref);
+      return a ? (a.width > 2000 ? a.previewUrl : a.url) ?? a.url : null;
+    };
+    return variations.map(({ a, i }) => ({
+      key: a.id, label: `Variation ${i + 1}`, thumb: a.thumbUrl ?? a.url,
+      media: { kind: 'design', design: replaceBackground(base, a.id, 'generated'), resolveSrc, photo: a.width ? { width: a.width, height: a.height } : null },
+    }));
+  }, [single, cardBundle, runs, cardIds]);
 
   const start = useMutation({
     mutationFn: () => api.post<{ jobs: Job[]; batchId: string | null }>('/ai/generate', {
@@ -47,7 +75,29 @@ export function GenerateDialog({ open, onOpenChange, projectId, cardIds, initial
       const initial = jobs.map((job) => ({ job, cardId: job.cardId!, assets: [] as AssetX[] }));
       setRuns(initial);
       await Promise.all(initial.map(async (r, i) => {
-        const done = await waitForJob(r.job.id, (j) => setRuns((cur) => cur.map((x, k) => (k === i ? { ...x, job: j } : x))));
+        // The job reports each variation as the companion uploads it (a few minutes for four), so show
+        // them as they land instead of one spinner until all are done. Pending ones are re-resolved
+        // until their thumbnails exist.
+        let finished = false;
+        const seen = { key: '', ready: false, busy: false };
+        const showPartial = (ids: string[]) => {
+          const key = ids.join(',');
+          if (!ids.length || seen.busy || (seen.key === key && seen.ready)) return;
+          seen.busy = true;
+          api.post<AssetX[]>('/assets/resolve', { ids })
+            .then((got) => {
+              seen.key = key;
+              seen.ready = got.every((a) => a.status !== 'pending');
+              if (!finished) setRuns((cur) => cur.map((x, k) => (k === i ? { ...x, assets: got } : x)));
+            })
+            .catch(() => {})
+            .finally(() => { seen.busy = false; });
+        };
+        const done = await waitForJob(r.job.id, (j) => {
+          setRuns((cur) => cur.map((x, k) => (k === i ? { ...x, job: j } : x)));
+          showPartial(((j.output as { assetIds?: string[] } | null)?.assetIds) ?? []);
+        });
+        finished = true;
         let assets: AssetX[] = [];
         const ids = ((done.output as { assetIds?: string[] } | null)?.assetIds) ?? [];
         if (ids.length) assets = await api.post<AssetX[]>('/assets/resolve', { ids });
@@ -67,8 +117,8 @@ export function GenerateDialog({ open, onOpenChange, projectId, cardIds, initial
     onError: (e) => toast.error(e.message),
   });
   const mark = useMutation({
-    mutationFn: ({ asset, kind }: { asset: AssetX; kind: 'style' | 'rejected' }) => api.post(`/assets/${asset.id}/reference`, { projectId, kind, note: prompt }),
-    onSuccess: (_d, v) => toast.success(v.kind === 'style' ? 'Saved as a reference for future generations' : 'Rejected: future generations will avoid it'),
+    mutationFn: ({ asset }: { asset: AssetX }) => api.post(`/assets/${asset.id}/reference`, { projectId, kind: 'style', note: prompt }),
+    onSuccess: () => toast.success('Saved as a reference for future generations'),
   });
   const preview = useMutation({
     mutationFn: () => api.post<{ prompt: string }>('/ai/compose', { projectId, cardId: cardIds[0], prompt, mode }),
@@ -77,6 +127,11 @@ export function GenerateDialog({ open, onOpenChange, projectId, cardIds, initial
   });
 
   const failed = runs.filter((r) => r.job.status === 'failed');
+  const live = (j: Job) => ['queued', 'preparing', 'running'].includes(j.status);
+  // ChatGPT makes one image at a time (~1–2 min each), so say which one is being made
+  const progress = (r: Run) => (r.job.status === 'queued' ? 'Waiting for the companion…'
+    : single && mode === 'generate' ? `Generating variation ${Math.min(r.assets.length + 1, Number(count))} of ${count}… about 1–2 minutes each. You can use one as soon as it appears.`
+      : 'Generating…');
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} width={phase === 'form' ? 600 : 960}
@@ -114,7 +169,7 @@ export function GenerateDialog({ open, onOpenChange, projectId, cardIds, initial
           </Field>
           {single && mode === 'generate' ? (
             <Field label="Variations"><Segmented value={count} onChange={setCount} options={['1', '2', '3', '4'].map((v) => ({ value: v as '1', label: v }))} /></Field>
-          ) : !single ? <div className="text-[12.5px] text-muted">One new background per card. Each becomes a new version for review; nothing approved is replaced. Failures don't stop the rest.</div> : null}
+          ) : !single ? <div className="text-[12.5px] text-muted">One new background per card, each saved as a new version. Failures don't stop the rest.</div> : null}
           {fullPrompt ? <pre className="max-h-64 overflow-auto rounded-md bg-hover p-3 text-[11.5px] leading-relaxed whitespace-pre-wrap scroll-quiet">{fullPrompt}</pre> : null}
         </div>
       ) : (
@@ -122,7 +177,8 @@ export function GenerateDialog({ open, onOpenChange, projectId, cardIds, initial
           {runs.map((r) => (
             <div key={r.job.id}>
               {!single ? <div className="mb-1.5 flex items-center gap-2 text-[12.5px] font-medium">{r.cardId}{r.job.status === 'completed' ? <Badge tone="ok">New version</Badge> : null}</div> : null}
-              {r.job.status === 'completed' && r.assets.length ? (
+              {(r.job.status === 'completed' || live(r.job)) && r.assets.length ? (
+                <>
                 <div className="grid grid-cols-2 gap-3">
                   {r.assets.map((a, i) => (
                     <div key={a.id} className="overflow-hidden rounded-lg border border-line">
@@ -130,22 +186,32 @@ export function GenerateDialog({ open, onOpenChange, projectId, cardIds, initial
                       <div className="flex flex-wrap items-center gap-1 p-2">
                         <span className="mr-auto text-[12px] text-muted">Variation {i + 1}</span>
                         {single ? <Button size="sm" variant="primary" icon={<Check className="size-3" />} loading={use.isPending} onClick={() => use.mutate({ cardId: r.cardId, asset: a, job: r.job })}>Use</Button> : null}
-                        <Button size="sm" variant="ghost" icon={<Bookmark className="size-3" />} onClick={() => mark.mutate({ asset: a, kind: 'style' })}>Save as reference</Button>
-                        <Button size="sm" variant="ghost" icon={<ThumbsDown className="size-3" />} onClick={() => mark.mutate({ asset: a, kind: 'rejected' })}>Reject</Button>
+                        <Button size="sm" variant="ghost" icon={<Bookmark className="size-3" />} onClick={() => mark.mutate({ asset: a })}>Save as reference</Button>
+                        {siteItems.some((x) => x.key === a.id) ? (
+                          <Button size="sm" variant={siteFocus === a.id ? 'subtle' : 'ghost'} icon={<MonitorSmartphone className="size-3" />}
+                            onClick={() => { setSiteFocus(a.id); document.getElementById('generate-site-preview')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>On arnifi.com</Button>
+                        ) : null}
                       </div>
                     </div>
                   ))}
                 </div>
+                {live(r.job) ? <div className="mt-3 flex items-center gap-2 text-[13px] text-muted"><Loader2 className="size-4 animate-spin" />{progress(r)}</div> : null}
+                </>
               ) : r.job.status === 'failed' ? (
                 <div className="rounded-lg bg-err-bg px-3 py-2 text-[13px] text-err">{r.job.error ?? 'Generation failed.'}</div>
               ) : r.job.status === 'paused' ? (
                 <div className="rounded-lg bg-warn-bg px-3 py-2 text-[13px] text-warn">Paused: provider usage limit. The request is kept and resumes later.</div>
               ) : (
-                <div className="flex items-center gap-2 rounded-lg border border-line px-3 py-6 text-[13px] text-muted"><Loader2 className="size-4 animate-spin" />{r.job.status === 'queued' ? 'Waiting for the companion…' : 'Generating…'}</div>
+                <div className="flex items-center gap-2 rounded-lg border border-line px-3 py-6 text-[13px] text-muted"><Loader2 className="size-4 animate-spin" />{progress(r)}</div>
               )}
             </div>
           ))}
           {single && phase === 'results' ? <Button className="self-start" icon={<RefreshCw className="size-3.5" />} onClick={() => start.mutate()}>Regenerate</Button> : null}
+          {siteItems.length ? (
+            <div id="generate-site-preview" className="scroll-mt-2">
+              <LazyListingPreview items={siteItems} initialKey={siteFocus} title={cardBundle?.card.name} />
+            </div>
+          ) : null}
         </div>
       )}
       {limit ? <UsageLimitDialog open onOpenChange={() => setLimit(null)} provider={limit.provider} resetAt={limit.resetAt} /> : null}

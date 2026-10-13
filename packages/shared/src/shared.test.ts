@@ -13,6 +13,11 @@ describe('friendly errors (PRD §81)', () => {
   it('never shows the raw error', () => {
     expect(friendly(new Error('FetchError ECONNRESET'))).toBe("We couldn't retrieve this page.");
   });
+  it('says so when the preview renderer (Chrome) dies, instead of a generic message', () => {
+    const closed = new Error('Connection closed.');
+    closed.name = 'ConnectionClosedError';
+    expect(friendly(closed)).toBe('The preview renderer stopped unexpectedly. Retry to render it again.');
+  });
 });
 
 describe('file sniffing', () => {

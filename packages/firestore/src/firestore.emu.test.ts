@@ -11,9 +11,10 @@ import { ctxOf } from './services/context';
 import { createProject, getProject } from './services/projects';
 import { approveCard, commitVersion, createCardsFromPages, getCardBundle, rejectCard, restoreVersion, saveDraft } from './services/cards';
 import { runBatch } from './services/batch';
-import { createExport, NeedsConfirmation } from './services/sources';
+import { createExport } from './services/sources';
 import { applyOverrides, diffOverrides, updateLayer } from '@acs/renderer';
 import { seedRecipes } from './services/recipes';
+import { appendToBatch, cancelBatch, claimCompanionJob, completeJob, enqueueBatch } from './services/jobs';
 
 const host = process.env.FIRESTORE_EMULATOR_HOST;
 const d = host ? describe : describe.skip;
@@ -94,16 +95,16 @@ d('firestore domain flows (emulator)', () => {
     const rej = await rejectCard(ctx, project.id, cards[1].id, ['Wrong subject', 'Looks AI-generated']);
     expect(rej.status).toBe('needs_image');
 
-    // export approved: card 1's approved V2 only; including card 2 needs explicit consent
-    const ex = await createExport(ctx, project.id, { scope: 'approved', format: 'png', scale: 1, includeUnapproved: false, contactSheet: true, csv: true, manifest: true });
-    expect(ex.files).toEqual([{ cardId: cards[0].id, versionId: c1.version.id, name: '', key: '', approved: true }]);
-    await expect(createExport(ctx, project.id, { scope: 'all', format: 'png', scale: 1, includeUnapproved: false, contactSheet: false, csv: false, manifest: false }))
-      .rejects.toBeInstanceOf(NeedsConfirmation);
+    // export is what you see: each card's current version (the restored V4 here, not the approved V2), no approval needed
+    const ex = await createExport(ctx, project.id, { scope: 'selected', cardIds: [cards[0].id], format: 'png', scale: 1 });
+    expect(ex.files).toEqual([{ cardId: cards[0].id, versionId: r.version.id, name: '', key: '', approved: false }]);
+    const everything = await createExport(ctx, project.id, { scope: 'all', format: 'jpg', scale: 1 });
+    expect(everything.files.map((f) => f.cardId)).toContain(cards[0].id);
 
-    // batch: hide the logo on both; the (re-)approved card is skipped unless included
+    // batch: hide the logo on both; approval no longer protects a card
     await approveCard(ctx, project.id, cards[0].id);
     const res = await runBatch(ctx, project.id, { cardIds: cards.map((c) => c.id), scope: 'selected', op: { action: 'toggle_layer', layerId: 'logo', visible: false } });
-    expect(res).toMatchObject({ changed: 1, skippedApproved: 1 });
+    expect(res).toMatchObject({ changed: 2, skippedApproved: 0 });
 
     // project default: gradient opacity for everyone; card overrides survive
     await runBatch(ctx, project.id, { cardIds: [], scope: 'project_default', includeApproved: true, op: { action: 'patch', reason: 'Darker gradient', overrides: { layers: { gradient: { opacity: 0.9 } } } } });
@@ -114,4 +115,40 @@ d('firestore domain flows (emulator)', () => {
     expect(nb.design.layers.find((l) => l.id === 'logo')!.visible).toBe(false);
     expect(applyOverrides(nb.base, nb.version!.overrides)).toEqual(nb.design);
   }, 60_000);
+
+  it('a card generated again from review joins its run, and the run settles only when it finishes', async () => {
+    const job = (cardId: string) => ({ type: 'ai.image' as const, executor: 'companion' as const, cardId, input: { meta: { cardId } } });
+    const { batch, jobs } = await enqueueBatch(ctx, 'prj_review', 'generate', 'Generating 2 backgrounds', [job('a'), job('b')]);
+    const [extra] = await appendToBatch(ctx, batch.id, [job('a')]);
+    const b1 = (await db.get<{ total: number; jobIds: string[]; status: string }>(P.batch(batch.id)))!;
+    expect(b1.total).toBe(3);
+    expect(b1.jobIds).toEqual([...jobs.map((j) => j.id), extra.id]);
+    expect((await db.get<Job>(P.job(extra.id)))!.batchId).toBe(batch.id);
+    for (const j of jobs) await completeJob(db, j, { kind: 'images', assetIds: [] });
+    expect((await db.get<{ status: string }>(P.batch(batch.id)))!.status).toBe('running');
+    await completeJob(db, extra, { kind: 'images', assetIds: [] });
+    expect((await db.get<{ status: string }>(P.batch(batch.id)))!.status).toBe('completed');
+  });
+
+  it('cancelling a run stops what is left, keeps what was made and is not counted as a failure', async () => {
+    const job = (cardId: string) => ({ type: 'ai.image' as const, executor: 'companion' as const, cardId, input: { meta: { cardId, assetIds: [] as string[] } } });
+    const { batch, jobs } = await enqueueBatch(ctx, 'prj_cancel', 'generate', 'Generating 4 backgrounds', [job('a'), job('b'), job('c'), job('d')]);
+    await completeJob(db, jobs[0], { kind: 'images', assetIds: ['ast_kept'] });          // a: finished
+    const running = (await claimCompanionJob(db, 'dev_1', ['ai.image']))!;                // one more is in progress
+    expect(jobs.slice(1).map((j) => j.id)).toContain(running.id);
+    const r = await cancelBatch(ctx, batch.id);
+    expect(r).toEqual({ cancelled: 3 });
+    const status = async (id: string) => (await db.get<Job>(P.job(id)))!.status;
+    expect(await status(jobs[0].id)).toBe('completed');                                   // made images stay
+    expect(await Promise.all(jobs.slice(1).map((j) => status(j.id)))).toEqual(['cancelled', 'cancelled', 'cancelled']);   // the running one too
+    expect((await db.get<Job>(P.job(running.id)))!.claimedBy).toBe('dev_1');             // the companion can still ask and see it
+    expect(await claimCompanionJob(db, 'dev_1', ['ai.image'])).toBeNull();                // nothing left to take
+    expect(await db.get(P.batch(batch.id))).toMatchObject({ status: 'cancelled', completed: 1, failed: 0, cancelled: 3, total: 4 });
+    expect(await cancelBatch(ctx, batch.id)).toEqual({ cancelled: 0 });                  // cancelling again changes nothing
+    // generating one card again afterwards joins the same run
+    const [again] = await appendToBatch(ctx, batch.id, [job('b')]);
+    expect(await db.get(P.batch(batch.id))).toMatchObject({ status: 'running', total: 5 });
+    await completeJob(db, again, { kind: 'images', assetIds: [] });
+    expect(await db.get(P.batch(batch.id))).toMatchObject({ status: 'cancelled', completed: 2, cancelled: 3, total: 5 });
+  });
 });

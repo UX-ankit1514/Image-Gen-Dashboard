@@ -6,7 +6,7 @@
  * reproduces the shipped 1600×1000 cards exactly. Other sizes derive from the same rules.
  */
 import type { BackgroundLayer, Design, GradientLayer, Layer, LogoLayer, TextLayer } from '@acs/types';
-import { PHOTO_DARK, PHOTO_LIGHT, PHOTO_NEUTRAL, presetFills } from './presets';
+import { CUSTOM_GRADIENT_PRESET, PHOTO_DARK, PHOTO_LIGHT, PHOTO_NEUTRAL, presetFills } from './presets';
 
 /** card.py fsize(): longer headlines step down so the block stays one shape. */
 export const LEGACY_LADDER = [{ max: 34, size: 66 }, { max: 48, size: 58 }, { max: 62, size: 52 }, { max: 100000, size: 46 }];
@@ -122,6 +122,9 @@ export function buildRecipe(id: string, width = 1600, height = 1000): Design {
     }
     case 'social-post':
       return design(geo(width, height), standardLayers(g, 'arnifi-light', PHOTO_LIGHT));
+    case 'my-gradient':
+      // the gradient fills come from the uploaded image when the project is created
+      return design(g, standardLayers(g, 'none', PHOTO_NEUTRAL).map((l) => (l.type === 'gradient' ? { ...l, preset: CUSTOM_GRADIENT_PRESET } : l)));
     case 'background-only':
       return design(g, hide(standardLayers(g, 'none', PHOTO_NEUTRAL), ['gradient', 'logo', 'headline', 'subheading']));
     case 'blank':
@@ -157,10 +160,32 @@ export const RECIPES: { id: string; name: string; description: string; width: nu
     description: 'Portrait 4:5 for social, same brand layers scaled to the frame.' },
   { id: 'uploaded-branding', name: 'Uploaded Image + Branding', width: 1600, height: 1000,
     description: 'Your own image with the full Arnifi treatment.' },
+  { id: 'my-gradient', name: 'My gradient', width: 1600, height: 1000,
+    description: 'A gradient you designed, uploaded as an image, with the logo, key line and headline.' },
   { id: 'background-only', name: 'Background Only', width: 1600, height: 1000,
     description: 'Just the image. Every other layer off (and toggleable).' },
   { id: 'blank', name: 'Blank', width: 1600, height: 1000,
     description: 'An empty canvas with every layer available but hidden.' },
+];
+
+/**
+ * The New Project "Look" step: four choices instead of the nine recipes, several of which build the
+ * same card. Each maps to the recipe that builds it; layer switches and the size do the rest.
+ */
+export type LookId = 'light' | 'dark' | 'custom' | 'none';
+export const LOOKS: { id: LookId; name: string; description: string; recipeId: string; gradient: boolean }[] = [
+  { id: 'light', name: 'Light gradient', description: 'Today’s production card: periwinkle sky, indigo base under the text.', recipeId: 'arnifi-light', gradient: true },
+  { id: 'dark', name: 'Dark gradient', description: 'The original deep purple wash with grain.', recipeId: 'arnifi-classic', gradient: true },
+  { id: 'custom', name: 'My gradient', description: 'A gradient you designed. Upload it once, reuse it on any project.', recipeId: 'my-gradient', gradient: true },
+  { id: 'none', name: 'No gradient', description: 'Just the photo, with the logo and text you switch on.', recipeId: 'website-banner', gradient: false },
+];
+
+/** What AI-generated photos should look like: the brief and rules sent with every image request. */
+export type PhotoStyleId = 'corporate' | 'documents' | 'editorial';
+export const PHOTO_STYLES: { id: PhotoStyleId; name: string; description: string; recipeId: string }[] = [
+  { id: 'corporate', name: 'Corporate photography', description: 'Buildings, offices and city scenes, lower-left kept quiet.', recipeId: 'arnifi-light' },
+  { id: 'documents', name: 'Document still life', description: 'The paper the service produces: legal, visa, attestation.', recipeId: 'legal-services' },
+  { id: 'editorial', name: 'Editorial still life', description: 'Natural light, shallow depth of field, calm composition.', recipeId: 'generated-editorial' },
 ];
 
 export function recipeById(id: string) {

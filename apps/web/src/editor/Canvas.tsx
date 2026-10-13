@@ -125,9 +125,16 @@ export function EditorCanvas({ resolveSrc, assetSize, onBoxes, onTextDoubleClick
 
   useEffect(() => { requestAnimationFrame(fit); }, [version, fit]);
   useEffect(() => {
-    const onResize = () => fit();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    // the viewport, not the window: side panels (the arnifi.com preview) resize it too
+    const vp = viewport.current;
+    if (!vp) return;
+    let last = `${vp.clientWidth}x${vp.clientHeight}`;
+    const ro = new ResizeObserver(() => {
+      const now = `${vp.clientWidth}x${vp.clientHeight}`;
+      if (now !== last) { last = now; fit(); }
+    });
+    ro.observe(vp);
+    return () => ro.disconnect();
   }, [fit]);
   useEffect(() => {
     const w = window as unknown as { __acsCanvas?: unknown };

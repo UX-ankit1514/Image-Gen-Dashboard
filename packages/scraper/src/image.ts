@@ -65,7 +65,8 @@ export async function analyse(bytes: Uint8Array, kind: 'png' | 'jpeg' | 'webp' |
   let mime = kind === 'jpeg' ? 'image/jpeg' : `image/${kind}`;
   let ext = kind === 'jpeg' ? 'jpg' : kind;
   let resampledFrom: Analysed['resampledFrom'] = null;
-  const hasAlpha = !!meta.hasAlpha;
+  // an alpha channel alone isn't transparency: many exported PNGs carry one that is fully opaque
+  const hasAlpha = !!meta.hasAlpha && !(await sharp(input, { limitInputPixels: false }).stats()).isOpaque;
 
   if (width * height > HUGE_PIXELS || kind === 'gif' || kind === 'avif') {
     // keep the working copy sane (21328 px will-drafting banners) and in a format Chrome and sharp both read

@@ -7,7 +7,7 @@ export type AssetX = Asset & { url: string | null; thumbUrl: string | null; prev
 export type ExportX = ExportRecord & { zipUrl: string | null; fileUrls: { name: string; url: string }[]; projectName?: string };
 
 export interface Bootstrap {
-  workspace: { id: string; name: string; settings: { namingTemplate: string; defaultProvider: string } };
+  workspace: { id: string; name: string; settings: { namingTemplate: string; defaultProvider: string; exportFormat?: 'png' | 'jpg' | 'webp' } };
   recipes: { id: string; name: string; description: string; width: number; height: number; builtin: boolean }[];
   gradientPresets: { id: string; name: string; description: string; editable: boolean }[];
   dimensionPresets: { label: string; width: number; height: number }[];

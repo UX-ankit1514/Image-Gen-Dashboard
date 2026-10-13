@@ -4,7 +4,7 @@
  *   arnifi-dark  ← arnifi-studio/pipeline/card.py   (wash, tone, side, vig, grain)
  *   arnifi-light ← new images/_system/relight.py    (grade as color, grade as multiply, tint)
  */
-import type { BackgroundLayer, Fill, Stop } from '@acs/types';
+import type { BackgroundLayer, BlendMode, Fill, Stop } from '@acs/types';
 
 function hex(r: number, g: number, b: number) {
   return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
@@ -86,4 +86,38 @@ export function presetById(id: string): GradientPreset | undefined {
 /** A deep copy, so editing a card's fills never mutates the shared preset. */
 export function presetFills(id: string): Fill[] {
   return JSON.parse(JSON.stringify(presetById(id)?.fills ?? []));
+}
+
+/**
+ * A gradient the user designed and uploaded as an image. How it combines with the photo depends on
+ * the file: a PNG with transparency goes on top as designed; a solid colour field tints the photo
+ * through blend modes, the way Arnifi Light's grade does.
+ */
+export const CUSTOM_GRADIENT_PRESET = 'my-gradient';
+export type GradientMix = 'designed' | 'tint' | 'darken' | 'soft';
+
+export const GRADIENT_MIXES: { id: GradientMix; name: string; description: string }[] = [
+  { id: 'designed', name: 'As designed', description: 'On top of the photo exactly as you made it. For PNGs with transparency.' },
+  { id: 'tint', name: 'Tint', description: 'Colours the photo with the gradient, like Arnifi Light. For solid gradients.' },
+  { id: 'darken', name: 'Darken', description: 'Multiplies the colours into the photo, which shows through darker.' },
+  { id: 'soft', name: 'Soft', description: 'A gentle soft-light wash that keeps the photo’s contrast.' },
+];
+
+const MIX_BLENDS: Record<GradientMix, [BlendMode, number][]> = {
+  designed: [['normal', 1]],
+  tint: [['color', 0.75], ['multiply', 0.9]],
+  darken: [['multiply', 1]],
+  soft: [['soft-light', 1]],
+};
+
+export function customGradientFills(src: string, mix: GradientMix): Fill[] {
+  return MIX_BLENDS[mix].map(([blend, opacity], i) => ({ kind: 'image', name: i ? 'my gradient (depth)' : 'my gradient', src, blend, opacity }));
+}
+
+/** The uploaded gradient a layer's fills use, and the mix, or null for the built-in presets. */
+export function customGradientOf(fills: Fill[]): { src: string; mix: GradientMix } | null {
+  const f = fills.find((x) => x.kind === 'image' && !x.src.startsWith('builtin:'));
+  if (!f || f.kind !== 'image') return null;
+  const mix = (Object.entries(MIX_BLENDS) as [GradientMix, [BlendMode, number][]][]).find(([, b]) => b[0][0] === f.blend)?.[0] ?? 'designed';
+  return { src: f.src, mix };
 }

@@ -1,19 +1,27 @@
 /**
  * New Project (PRD §12): six decisions on one page, every one pre-filled, so creating a project takes
- * a name and a link. A live preview shows the recipe, size and layers before anything is created.
+ * a name and a link. A live preview shows the look, size and layers before anything is created.
+ *
+ * The look is one of four, each shown as a real mini card: the nine recipes behind it mostly built
+ * the same card (Arnifi Light, Uploaded Image + Branding and Legal Services; Blank and Background
+ * Only), so those differences moved to where they belong: layer switches, the size, and the AI photo
+ * style. Uploaded images also get the arnifi.com listing preview.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Clipboard, FileUp, FolderInput, Globe, Layers, Link2, PenSquare } from 'lucide-react';
-import { buildRecipe, CardScene, updateLayer } from '@acs/renderer';
-import type { CreateProjectBody, InputType, LayerToggles, Scan, TextLayer } from '@acs/types';
+import { applyCustomGradient, buildRecipe, CardScene, LOOKS, PHOTO_STYLES, updateLayer, type LookId, type PhotoStyleId } from '@acs/renderer';
+import type { BackgroundLayer, CreateProjectBody, Design, InputType, LayerToggles, Scan, TextLayer } from '@acs/types';
 import { api } from '../lib/api';
 import { builtinUrl } from '../lib/builtins';
-import { useBootstrap } from '../lib/queries';
 import { PageHeader } from '../shell/AppShell';
 import { Button, cx, Field, Input, Switch, Textarea } from '../ui';
+import { GradientPicker, gradientUrl, useGradients, type GradientChoice } from '../components/GradientPicker';
+import { LazyListingPreview, useLocalImages } from '../listing';
+import { FitWidth } from '../listing/ListingMock';
+import samplePhoto from '../listing/sample-photo.jpg';
 import { readLegacyFolder, type LegacyFolder } from './importLegacy';
 
 const INPUTS: { value: InputType; label: string; icon: React.ReactNode; hint: string }[] = [
@@ -25,9 +33,25 @@ const INPUTS: { value: InputType; label: string; icon: React.ReactNode; hint: st
   { value: 'blank', label: 'Start blank', icon: <PenSquare className="size-4" />, hint: 'One empty card.' },
 ];
 
+const NO_FILES: File[] = [];
+
+/**
+ * One size per arnifi.com listing page, measured from the live pages (13 Oct 2026). Each listing
+ * draws the card image with object-fit: cover, centred:
+ *   Business setup  box is 16:10 at any screen (457 × 286 px at 1920, 329 × 206 at 1440)
+ *   Visa services   box is 141 px tall at the card's width (337 × 141 at 1440, 2.39:1)
+ *   Post-setup      the same 141 px box as Visa services
+ * Widths are 1600 px so the image stays sharp on retina screens at every box size.
+ */
+const SIZES = [
+  { id: 'licence', page: 'Business setup', width: 1600, height: 1000 },
+  { id: 'visa', page: 'Visa services', width: 1600, height: 670 },
+  { id: 'postsetup', page: 'Post-setup compliance', width: 1600, height: 670 },
+] as const;
+
 const LAYERS: { key: keyof LayerToggles; label: string }[] = [
   { key: 'background', label: 'Background' }, { key: 'gradient', label: 'Gradient' }, { key: 'logo', label: 'Logo' },
-  { key: 'headline', label: 'Heading' }, { key: 'subheading', label: 'Subheading' },
+  { key: 'headline', label: 'Heading' }, { key: 'subheading', label: 'First line' },
 ];
 
 const PROVIDERS = [
@@ -41,7 +65,6 @@ export function NewProjectPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { data: boot } = useBootstrap();
   const [name, setName] = useState('');
   const [input, setInput] = useState<InputType>((params.get('input') as InputType) || 'url');
   const [url, setUrl] = useState(params.get('url') ?? '');
@@ -49,9 +72,11 @@ export function NewProjectPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [shot, setShot] = useState<File | null>(null);
   const [folder, setFolder] = useState<LegacyFolder | null>(null);
-  const [recipeId, setRecipeId] = useState('arnifi-light');
-  const [dim, setDim] = useState({ width: 1600, height: 1000, custom: false });
-  const [layers, setLayers] = useState<LayerToggles>({ background: true, gradient: true, logo: true, headline: true, subheading: true });
+  const [look, setLook] = useState<LookId>('light');
+  const [gradient, setGradient] = useState<GradientChoice | null>(null);
+  const [photoStyle, setPhotoStyle] = useState<PhotoStyleId>('corporate');
+  const [dim, setDim] = useState<{ width: number; height: number; size: string }>({ width: 1600, height: 1000, size: 'licence' });
+  const [layers, setLayers] = useState<LayerToggles>({ background: true, gradient: true, logo: true, headline: true, subheading: false });
   const [provider, setProvider] = useState<CreateProjectBody['provider']>('auto');
   const [progress, setProgress] = useState<string | null>(null);
   const nameTouched = useRef(false);
@@ -81,27 +106,53 @@ export function NewProjectPage() {
     return () => window.removeEventListener('paste', onPaste);
   }, [input]);
 
-  const recipe = boot?.recipes.find((r) => r.id === recipeId);
-  useEffect(() => {
-    if (recipe && !dim.custom) setDim({ width: recipe.width, height: recipe.height, custom: false });
-  }, [recipeId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lookDef = LOOKS.find((l) => l.id === look)!;
+  const pickLook = (id: LookId) => {
+    setLook(id);
+    setLayers((t) => ({ ...t, gradient: LOOKS.find((l) => l.id === id)!.gradient }));
+  };
+  const { data: gradients } = useGradients();
+  const shotFiles = useMemo(() => (shot ? [shot] : []), [shot]);
+  const local = useLocalImages(input === 'upload' ? files : input === 'screenshot' ? shotFiles : NO_FILES);
+  const resolveSrc = useCallback((ref: string) => {
+    if (ref === 'sample:photo') return samplePhoto;
+    if (ref.startsWith('file:')) return local[Number(ref.slice(5))]?.url ?? null;
+    if (ref.startsWith('builtin:')) return builtinUrl(ref);
+    return gradientUrl(gradients.find((g) => g.id === ref));
+  }, [local, gradients]);
 
-  const preview = useMemo(() => {
-    let d = buildRecipe(boot?.recipes.find((r) => r.id === recipeId)?.builtin === false ? 'arnifi-light' : recipeId, dim.width, dim.height);
-    d = updateLayer(d, 'headline', { text: name || 'Ireland Company Setup' } as Partial<TextLayer>);
-    d = updateLayer(d, 'subheading', { text: 'Fast and efficient setup' } as Partial<TextLayer>);
-    d = { ...d, canvas: { ...d.canvas, background: '#5b6aa8' }, layers: d.layers.map((l) => (l.id in layers ? { ...l, visible: layers[l.id as keyof LayerToggles] } : l)) };
-    return d;
-  }, [recipeId, dim.width, dim.height, layers, name, boot]);
+  // the card each look would make, on the first uploaded image or a sample photo
+  const designFor = useCallback((id: LookId, bg: string, text: { headline: string; subheading: string }): Design => {
+    const def = LOOKS.find((l) => l.id === id)!;
+    let d = buildRecipe(def.recipeId, dim.width, dim.height);
+    if (id === 'custom' && gradient) d = applyCustomGradient(d, gradient.assetId, gradient.mix);
+    d = updateLayer(d, 'headline', { text: text.headline } as Partial<TextLayer>);
+    d = updateLayer(d, 'subheading', { text: text.subheading } as Partial<TextLayer>);
+    d = updateLayer(d, 'background', { assetId: bg, source: 'uploaded' } as Partial<BackgroundLayer>);
+    const vis = { ...layers, gradient: def.gradient && layers.gradient };
+    return { ...d, canvas: { ...d.canvas, background: '#5b6aa8' }, layers: d.layers.map((l) => (l.id in vis ? { ...l, visible: vis[l.id as keyof LayerToggles] } : l)) };
+  }, [dim.width, dim.height, layers, gradient]);
 
-  const ready = name.trim() && (
+  const sampleText = { headline: name || 'Ireland Company Setup', subheading: 'Fast and efficient setup' };
+  const uploading = input === 'upload' || input === 'screenshot';
+  const preview = useMemo(() => designFor(look, uploading && local.length ? 'file:0' : 'sample:photo', uploading && local.length ? { headline: '', subheading: '' } : sampleText),
+    [designFor, look, uploading, local.length, sampleText.headline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // uploads become cards with no text yet (the logo and look apply), so that's what the listing shows
+  const listingItems = useMemo(() => local.map((img, i) => ({
+    key: `${img.file.name}:${i}`, label: img.file.name, thumb: img.url,
+    media: { kind: 'design' as const, design: designFor(look, `file:${i}`, { headline: '', subheading: '' }), resolveSrc, photo: { width: img.width, height: img.height } },
+  })), [local, designFor, look, resolveSrc]);
+
+  const ready = name.trim() && (look !== 'custom' || gradient) && (
     (input === 'url' && url.trim()) || (input === 'urls' && urls.trim()) || (input === 'upload' && files.length) ||
     (input === 'screenshot' && shot) || (input === 'import' && folder?.records.length) || input === 'blank');
 
   const create = useMutation({
     mutationFn: async () => {
       const body: CreateProjectBody = {
-        name: name.trim(), inputType: input, recipeId, width: dim.width, height: dim.height, layers, provider,
+        name: name.trim(), inputType: input, recipeId: lookDef.recipeId, width: dim.width, height: dim.height, layers, provider,
+        gradient: look === 'custom' && gradient ? gradient : undefined, photoStyle: provider === 'none' ? undefined : photoStyle,
         urls: input === 'url' ? [url.trim()] : input === 'urls' ? urls.split(/\s+/).map((u) => u.trim()).filter(Boolean) : undefined,
       };
       setProgress('Creating project');
@@ -160,6 +211,9 @@ export function NewProjectPage() {
               {input === 'upload' ? (
                 <DropZone files={files} onFiles={setFiles} />
               ) : null}
+              {uploading && listingItems.length ? (
+                <LazyListingPreview className="mt-3" items={listingItems} />
+              ) : null}
               {input === 'screenshot' ? (
                 <div className="flex min-h-[120px] items-center justify-center rounded-lg border border-dashed border-line-strong bg-panel p-4 text-center text-[13px] text-muted">
                   {shot ? <img src={URL.createObjectURL(shot)} alt="" className="max-h-48 rounded-md" /> : <span>Press <b className="text-ink">⌘V</b> to paste a screenshot. It becomes a card you can attach a webpage to later.</span>}
@@ -169,28 +223,51 @@ export function NewProjectPage() {
             </div>
           </Step>
 
-          <Step n={3} title="Creative recipe">
-            <div className="grid grid-cols-3 gap-2">
-              {(boot?.recipes ?? []).map((r) => (
-                <button key={r.id} onClick={() => setRecipeId(r.id)} className={cx('press rounded-lg border px-3 py-2.5 text-left', recipeId === r.id ? 'border-ink shadow-[0_0_0_1px_#111]' : 'border-line hover:border-line-strong', 'bg-panel')}>
-                  <div className="text-[13px] font-medium">{r.name}</div>
-                  <div className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-muted">{r.description}</div>
-                </button>
-              ))}
+          <Step n={3} title="Look" sub="Every card in the project starts from this. Each card can change it later.">
+            <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Look">
+              {LOOKS.map((l) => {
+                const d = designFor(l.id, uploading && local.length ? 'file:0' : 'sample:photo', sampleText);
+                return (
+                  <button key={l.id} role="radio" aria-checked={look === l.id} onClick={() => pickLook(l.id)}
+                    className={cx('press flex flex-col overflow-hidden rounded-lg border bg-panel text-left', look === l.id ? 'border-ink shadow-[0_0_0_1px_#111]' : 'border-line hover:border-line-strong')}>
+                    <div className="relative w-full bg-hover">
+                      <FitWidth width={d.canvas.width}><CardScene design={d} resolveSrc={resolveSrc} /></FitWidth>
+                      {l.id === 'custom' && !gradient ? (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/35 text-[12px] font-medium text-white">Upload or pick one</div>
+                      ) : null}
+                    </div>
+                    <div className="px-2.5 py-2">
+                      <div className="text-[13px] font-medium">{l.name}</div>
+                      <div className="mt-0.5 line-clamp-2 text-[11.5px] leading-snug text-muted">{l.description}</div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
+            {look === 'custom' ? (
+              <div className="mt-3 rounded-lg border border-line bg-panel p-3">
+                <div className="mb-2 text-[12.5px] font-medium">My gradients <span className="font-normal text-muted">· saved for every project</span></div>
+                <GradientPicker value={gradient} onChange={setGradient} />
+              </div>
+            ) : null}
           </Step>
 
-          <Step n={4} title="Dimensions">
+          <Step n={4} title="Dimensions" sub="The image box on each arnifi.com listing page.">
             <div className="flex flex-wrap gap-2">
-              {(boot?.dimensionPresets ?? []).map((p) => (
-                <button key={p.label} onClick={() => setDim({ width: p.width, height: p.height, custom: false })}
-                  className={cx('press h-8 rounded-md border px-3 text-[13px] tabular-nums', !dim.custom && dim.width === p.width && dim.height === p.height ? 'border-ink bg-ink text-white' : 'border-line bg-panel hover:border-line-strong')}>
-                  {p.label}
+              {SIZES.map((p) => (
+                <button key={p.id} onClick={() => setDim({ width: p.width, height: p.height, size: p.id })}
+                  className={cx('press flex flex-col items-start rounded-md border px-3 py-1.5 text-left', dim.size === p.id ? 'border-ink bg-ink text-white' : 'border-line bg-panel hover:border-line-strong')}>
+                  <span className="text-[13px] font-medium">{p.page}</span>
+                  <span className={cx('text-[12px] tabular-nums', dim.size === p.id ? 'text-white/70' : 'text-muted')}>{p.width} × {p.height}</span>
                 </button>
               ))}
-              <button onClick={() => setDim({ ...dim, custom: true })} className={cx('press h-8 rounded-md border px-3 text-[13px]', dim.custom ? 'border-ink bg-ink text-white' : 'border-line bg-panel hover:border-line-strong')}>Custom</button>
+              <button onClick={() => setDim({ ...dim, size: 'custom' })}
+                className={cx('press flex flex-col items-start rounded-md border px-3 py-1.5 text-left', dim.size === 'custom' ? 'border-ink bg-ink text-white' : 'border-line bg-panel hover:border-line-strong')}>
+                <span className="text-[13px] font-medium">Custom</span>
+                <span className={cx('text-[12px]', dim.size === 'custom' ? 'text-white/70' : 'text-muted')}>Any size</span>
+              </button>
             </div>
-            {dim.custom ? (
+            {dim.size === 'custom' ? (
               <div className="mt-3 flex items-center gap-2">
                 <Field label="Width" className="w-28"><Input type="number" value={dim.width} onChange={(e) => setDim({ ...dim, width: Math.max(16, Math.min(8192, Number(e.target.value) || 16)) })} /></Field>
                 <span className="mt-6 text-muted">×</span>
@@ -219,6 +296,19 @@ export function NewProjectPage() {
                 </button>
               ))}
             </div>
+            {provider !== 'none' ? (
+              <div className="mt-3">
+                <div className="mb-1.5 text-[12.5px] font-medium">Photo style for AI images</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {PHOTO_STYLES.map((p) => (
+                    <button key={p.id} onClick={() => setPhotoStyle(p.id)} className={cx('press rounded-lg border bg-panel px-3 py-2 text-left', photoStyle === p.id ? 'border-ink shadow-[0_0_0_1px_#111]' : 'border-line hover:border-line-strong')}>
+                      <div className="text-[12.5px] font-medium">{p.name}</div>
+                      <div className="mt-0.5 text-[11.5px] leading-snug text-muted">{p.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </Step>
         </div>
 
@@ -228,11 +318,12 @@ export function NewProjectPage() {
             <div className="flex items-center justify-center rounded-lg bg-canvas p-3" style={{ height: 320 }}>
               <div style={{ width: dim.width * scale, height: dim.height * scale }} className="overflow-hidden rounded-[3px] shadow-[var(--shadow-card)]">
                 <div style={{ transform: `scale(${scale})`, transformOrigin: '0 0' }}>
-                  <CardScene design={preview} resolveSrc={builtinUrl} />
+                  <CardScene design={preview} resolveSrc={resolveSrc} />
                 </div>
               </div>
             </div>
-            <div className="mt-3 text-[12px] text-muted">{recipe?.description}</div>
+            <div className="mt-3 text-[12px] text-muted"><span className="font-medium text-ink">{lookDef.name}.</span> {lookDef.description}</div>
+            {look === 'custom' && !gradient ? <div className="mt-1 text-[12px] text-warn">Upload or pick a gradient in step 3.</div> : null}
             <Button variant="primary" className="mt-4 w-full" disabled={!ready} loading={create.isPending} onClick={() => create.mutate()}>
               {create.isPending ? progress ?? 'Creating…' : input === 'url' || input === 'urls' ? 'Create project and scan' : 'Create project'}
             </Button>

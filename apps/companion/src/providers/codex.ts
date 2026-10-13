@@ -55,10 +55,10 @@ export class OpenAICodexLocal implements AIProvider {
     throw new ProviderError('provider_error', (r.stderr || r.stdout || `codex exited ${r.code}`).slice(-500));
   }
 
-  async run(task: AiTask, signal?: AbortSignal): Promise<AiResult> {
+  async run(task: AiTask, signal?: AbortSignal, onImage?: (file: string) => Promise<void>): Promise<AiResult> {
     const dir = mkdtempSync(join(tmpdir(), 'acs-codex-'));
     try {
-      if (task.kind === 'image' || task.kind === 'image-edit') return await this.image(task, dir, signal);
+      if (task.kind === 'image' || task.kind === 'image-edit') return await this.image(task, dir, signal, onImage);
       const args = [...BASE, ...this.model(), '-s', 'read-only', '-C', dir, '-o', join(dir, 'out.txt')];
       if (task.schema) {
         writeFileSync(join(dir, 'schema.json'), JSON.stringify(task.schema));
@@ -75,12 +75,13 @@ export class OpenAICodexLocal implements AIProvider {
     }
   }
 
-  private async image(task: AiTask, dir: string, signal?: AbortSignal): Promise<AiResult> {
+  private async image(task: AiTask, dir: string, signal?: AbortSignal, onImage?: (file: string) => Promise<void>): Promise<AiResult> {
     const n = Math.max(1, Math.min(4, task.n ?? 1));
     const outDir = mkdtempSync(join(tmpdir(), 'acs-codex-out-'));
     const files: string[] = [];
     const fmt = aspect(task.size?.width ?? 1600, task.size?.height ?? 1000);
     for (let k = 1; k <= n; k++) {
+      if (signal?.aborted) break;
       const target = join(outDir, `out-${k}.png`);
       const edit = task.kind === 'image-edit' && task.images?.length;
       const instruction = edit
@@ -92,11 +93,12 @@ export class OpenAICodexLocal implements AIProvider {
       if (existsSync(target) && statSync(target).size > 0) {
         files.push(target);
         this.imageVerified = true;
+        await onImage?.(target);
         continue;
       }
       // the tool may have saved elsewhere in the workspace
       const stray = readdirSync(dir).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).map((f) => join(dir, f));
-      if (stray.length) { files.push(stray[0]); this.imageVerified = true; continue; }
+      if (stray.length) { files.push(stray[0]); this.imageVerified = true; await onImage?.(stray[0]); continue; }
       const text = `${r.stdout}\n${r.stderr}`;
       if (/image generation (is )?(not|un)available|don'?t have (access to )?(an )?image|cannot generate images|no image (generation )?tool/i.test(text)) {
         this.imageVerified = false;

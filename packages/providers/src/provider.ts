@@ -49,7 +49,8 @@ export interface AIProvider {
   id: ProviderId;
   detect(): Promise<DetectedCli>;
   capabilities(d: DetectedCli): ProviderCapabilities;
-  run(task: AiTask, signal?: AbortSignal): Promise<AiResult>;
+  /** `onImage` gets each generated image file as soon as it exists, so it can be uploaded while the rest are still being made. */
+  run(task: AiTask, signal?: AbortSignal, onImage?: (file: string) => Promise<void>): Promise<AiResult>;
 }
 
 export class ProviderError extends Error {

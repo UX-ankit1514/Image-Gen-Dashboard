@@ -49,6 +49,12 @@ export interface RasterizerConfig {
 
 export const MAC_CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
+const browserKey = (dsf: number, W: number, H: number) => `${dsf}:${W}x${H}`;
+
+/** The browser or its DevTools connection is gone (not a problem with the card): a fresh Chrome fixes it. */
+const BROWSER_GONE = /connection closed|target closed|session closed|browser (has disconnected|is not connected)/i;
+export const isBrowserGone = (err: unknown) => err instanceof Error && BROWSER_GONE.test(`${err.name} ${err.message}`);
+
 export class Rasterizer {
   /** One Chrome per (device scale, window size). The scale is set with the real
    *  --force-device-scale-factor flag, as render.py did: puppeteer's emulated deviceScaleFactor lays
@@ -60,7 +66,7 @@ export class Rasterizer {
   constructor(private cfg: RasterizerConfig) {}
 
   private launch(dsf: number, W: number, H: number) {
-    const key = `${dsf}:${W}x${H}`;
+    const key = browserKey(dsf, W, H);
     let b = this.browsers.get(key);
     if (!b) {
       while (this.browsers.size >= 3) {
@@ -68,16 +74,31 @@ export class Rasterizer {
         this.browsers.delete(k);
         old.then((x) => x.close()).catch(() => {});
       }
-      b = puppeteer.launch({
+      const launched = puppeteer.launch({
         executablePath: this.cfg.executablePath,
         headless: this.cfg.headless ?? true,
         defaultViewport: null,
         args: ['--disable-gpu', '--hide-scrollbars', '--allow-file-access-from-files',
           `--force-device-scale-factor=${dsf}`, `--window-size=${W},${H}`, ...(this.cfg.args ?? [])],
       });
+      b = launched;
       this.browsers.set(key, b);
+      // A Chrome that never starts, or later loses its DevTools connection (crash, update, sleep), must
+      // not stay cached: every render would reuse the dead handle and fail with "Connection closed"
+      // until the whole process restarted.
+      launched.then((br) => br.once('disconnected', () => this.forget(key, launched)), () => this.forget(key, launched));
     }
     return b;
+  }
+
+  /** Drop a browser from the cache (only if it is still the cached one) and make sure its process is gone. */
+  private forget(key: string, b: Promise<Browser>) {
+    if (this.browsers.get(key) === b) this.browsers.delete(key);
+    void b.then(async (br) => {
+      const proc = br.process();
+      await Promise.race([br.close(), new Promise((r) => setTimeout(r, 3000))]).catch(() => {});
+      proc?.kill('SIGKILL');
+    }).catch(() => {});
   }
 
   /** The supersampled screenshot (PNG) plus measured layer boxes, before any downsampling. */
@@ -87,7 +108,19 @@ export class Rasterizer {
     // legacy: 2× for a 1× card. Larger exports supersample less so the capture stays ≤ ~40 MP.
     const maxDsf = Math.max(1, Math.floor(Math.min(16000 / Math.max(W, H), Math.sqrt(40e6 / (W * H)))));
     const dsf = Math.max(Math.min(Math.ceil(scale * (opts.supersample ?? 2)), maxDsf), Math.min(Math.ceil(scale), maxDsf));
-    const browser = await this.launch(dsf, W, H);
+    const cached = this.launch(dsf, W, H);
+    try {
+      return await this.shoot(await cached, design, opts, dsf);
+    } catch (err) {
+      if (!isBrowserGone(err)) throw err;
+      // the cached Chrome died since its last use: replace it and take the shot once more
+      this.forget(browserKey(dsf, W, H), cached);
+      return await this.shoot(await this.launch(dsf, W, H), design, opts, dsf);
+    }
+  }
+
+  private async shoot(browser: Browser, design: Design, opts: RasterOptions, dsf: number) {
+    const { width: W, height: H } = design.canvas;
     const page = await browser.newPage();
     const file = join(this.dir, `card-${process.pid}-${++this.seq}.html`);
     try {

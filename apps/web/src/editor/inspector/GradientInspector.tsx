@@ -1,11 +1,11 @@
-/** Gradient layer (PRD §22): enabled, opacity, angle, colours, position, blend, presets; apply beyond this card. */
+/** Gradient layer (PRD §22): enabled, opacity, angle, colours, position, blend, presets, an uploaded gradient. */
 import { Plus, Trash2 } from 'lucide-react';
 import type { BlendMode, Fill, GradientLayer, GradientPatch, LinearFill } from '@acs/types';
-import { applyGradientPatch, applyGradientPreset, GRADIENT_PRESETS, stopColor } from '@acs/renderer';
+import { applyCustomGradient, applyGradientPatch, applyGradientPreset, CUSTOM_GRADIENT_PRESET, customGradientOf, GRADIENT_PRESETS, stopColor } from '@acs/renderer';
 import { useEditor } from '../store';
-import { useEditorCtx } from '../context';
-import { Button, ColorField, IconButton, Menu, MenuItem, NumberField, Select, Slider, Switch } from '../../ui';
+import { Button, ColorField, IconButton, NumberField, Select, Slider, Switch } from '../../ui';
 import { Row, Section } from './parts';
+import { GradientPicker } from '../../components/GradientPicker';
 
 const BLENDS: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'soft-light', 'darken', 'lighten', 'color', 'luminosity', 'hue', 'saturation'];
 
@@ -17,25 +17,24 @@ function hexOf(f: LinearFill | undefined, i: number) {
 export function GradientInspector({ layer }: { layer: GradientLayer }) {
   const apply = useEditor((s) => s.apply);
   const update = useEditor((s) => s.updateLayer);
-  const ctx = useEditorCtx();
   const patch = (p: GradientPatch, key?: string) => apply((d) => applyGradientPatch(d, p), key);
   const lin = layer.fills.find((f) => f.kind === 'linear') as LinearFill | undefined;
   const preset = GRADIENT_PRESETS.find((p) => p.id === layer.preset);
+  const custom = customGradientOf(layer.fills);
+  const isCustom = layer.preset === CUSTOM_GRADIENT_PRESET;
   const fieldOnly = !lin;
   const startAlpha = lin?.stops[0]?.alpha ?? 1;
   const endAlpha = lin?.stops[lin.stops.length - 1]?.alpha ?? 0;
   const position = lin?.stops[lin.stops.length - 1]?.pos ?? 100;
 
   const setFill = (i: number, f: Partial<Fill>) => update(layer.id, { fills: layer.fills.map((x, j) => (j === i ? ({ ...x, ...f } as Fill) : x)) } as Partial<GradientLayer>, `fill:${i}`);
-  const beyond = (scope: 'selected' | 'project' | 'project_default') =>
-    ctx.applyBeyond(scope, { action: 'patch', reason: `Gradient: ${layer.preset}`, overrides: { layers: { gradient: { preset: layer.preset, fills: layer.fills, opacity: layer.opacity, visible: layer.visible } } } });
 
   return (
     <>
       <Section title="Gradient" action={<Switch checked={layer.visible} onCheckedChange={(visible) => update(layer.id, { visible })} label="Gradient enabled" />}>
         <Row label="Preset">
           <Select size="sm" value={preset ? layer.preset : '__custom'} onChange={(v) => v !== '__custom' && apply((d) => applyGradientPreset(d, v))}
-            options={[...GRADIENT_PRESETS.map((p) => ({ value: p.id, label: p.name })), ...(!preset ? [{ value: '__custom', label: layer.preset }] : [])]} />
+            options={[...GRADIENT_PRESETS.map((p) => ({ value: p.id, label: p.name })), ...(!preset ? [{ value: '__custom', label: isCustom ? 'My gradient' : layer.preset }] : [])]} />
         </Row>
         <Row label="Opacity">
           <div className="flex items-center gap-2">
@@ -52,7 +51,7 @@ export function GradientInspector({ layer }: { layer: GradientLayer }) {
       <Section title={fieldOnly ? 'Colour field' : 'Linear fill'}>
         {fieldOnly ? (
           <div className="flex flex-col gap-2">
-            <p className="text-[12px] text-muted">{preset?.description ?? 'An image-based colour field.'} Its colours come from the field image, so there are no stops to edit.</p>
+            <p className="text-[12px] text-muted">{isCustom ? 'Your uploaded gradient. Change how it mixes under My gradient.' : `${preset?.description ?? 'An image-based colour field.'} Its colours come from the field image, so there are no stops to edit.`}</p>
             <Button size="sm" icon={<Plus className="size-3.5" />} onClick={() => patch({ angle: 90, start: '#080808', startAlpha: 0.6, end: 'transparent', position: 70 })}>Add a linear fade on top</Button>
           </div>
         ) : (
@@ -79,6 +78,12 @@ export function GradientInspector({ layer }: { layer: GradientLayer }) {
         )}
       </Section>
 
+      <Section title="My gradient">
+        <p className="-mt-1 text-[11.5px] text-muted">Use a gradient you designed. Uploads are saved for every project.</p>
+        <GradientPicker compact value={custom && isCustom ? { assetId: custom.src, mix: custom.mix } : null}
+          onChange={(v) => apply((d) => applyCustomGradient(d, v.assetId, v.mix), `my-gradient:${v.assetId}`)} />
+      </Section>
+
       <Section title="Layers in this gradient">
         {layer.fills.map((f, i) => (
           <div key={i} className="flex items-center gap-2">
@@ -90,10 +95,6 @@ export function GradientInspector({ layer }: { layer: GradientLayer }) {
             <IconButton size="sm" label="Remove" onClick={() => update(layer.id, { fills: layer.fills.filter((_, j) => j !== i) } as Partial<GradientLayer>)}><Trash2 className="size-3" /></IconButton>
           </div>
         ))}
-        <Menu align="start" trigger={<Button size="sm" variant="secondary">Apply this gradient to…</Button>}>
-          <MenuItem onSelect={() => beyond('project')}>Every card in the project</MenuItem>
-          <MenuItem onSelect={() => beyond('project_default')}>The project default</MenuItem>
-        </Menu>
       </Section>
     </>
   );

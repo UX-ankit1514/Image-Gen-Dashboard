@@ -1,12 +1,11 @@
-/** Background layer (PRD §21): source, replace/generate/edit, fit, focal point, zoom, reposition, flip, reset. */
+/** Background layer (PRD §21): source, replace/generate, fit, focal point, zoom, reposition, flip, reset. */
 import { useRef } from 'react';
-import { FlipHorizontal2, FlipVertical2, ImagePlus, RotateCcw, Sparkles, Wand2 } from 'lucide-react';
+import { FlipHorizontal2, FlipVertical2, ImagePlus, RotateCcw, Sparkles } from 'lucide-react';
 import type { BackgroundLayer } from '@acs/types';
 import { PHOTO_DARK, PHOTO_LIGHT, PHOTO_NEUTRAL } from '@acs/renderer';
 import { useEditor } from '../store';
 import { useEditorCtx } from '../context';
 import { Badge, Button, IconButton, NumberField, Segmented, Slider, Tip } from '../../ui';
-import { AssetFlags } from '../../pages/Scan';
 import { Row, Section } from './parts';
 
 const SOURCE: Record<string, string> = { website: 'Website', generated: 'Generated', uploaded: 'Uploaded', project: 'Project asset', previous: 'Previous version', none: 'None' };
@@ -27,16 +26,12 @@ export function BackgroundInspector({ layer }: { layer: BackgroundLayer }) {
           <div className="min-w-0">
             <div className="truncate text-[12.5px] font-medium">{asset?.name ?? 'No image'}</div>
             <div className="text-[11.5px] text-muted">{SOURCE[layer.source] ?? layer.source}{asset ? ` · ${asset.width} × ${asset.height}` : ''}</div>
-            {asset ? <div className="mt-1"><AssetFlags a={asset} compact /></div> : null}
           </div>
         </div>
         <div className="grid grid-cols-2 gap-1.5">
           <Button size="sm" icon={<ImagePlus className="size-3.5" />} onClick={() => ctx.pickImage('background')}>Replace</Button>
-          <Tip label={ctx.aiAvailable.image ? 'Generate a new background with AI' : 'Image generation is unavailable on the connected AI'}>
-            <span><Button size="sm" className="w-full" icon={<Sparkles className="size-3.5" />} disabled={!ctx.aiAvailable.image} onClick={() => ctx.runAi('', { intentHint: 'GENERATE_BACKGROUND' })}>Generate</Button></span>
-          </Tip>
-          <Tip label={ctx.aiAvailable.image ? 'Describe a change to this image' : 'Image editing is unavailable on the connected AI'}>
-            <span className="col-span-2"><Button size="sm" className="w-full" icon={<Wand2 className="size-3.5" />} disabled={!ctx.aiAvailable.image || !layer.assetId} onClick={() => ctx.runAi('', { intentHint: 'EDIT_BACKGROUND' })}>Edit with prompt</Button></span>
+          <Tip label={ctx.canGenerate ? 'Generate a new background' : 'Connect ChatGPT under AI Connections to generate'}>
+            <span><Button size="sm" className="w-full" icon={<Sparkles className="size-3.5" />} disabled={!ctx.canGenerate} onClick={ctx.generateBackground}>Generate</Button></span>
           </Tip>
         </div>
       </Section>

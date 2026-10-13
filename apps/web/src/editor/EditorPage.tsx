@@ -1,22 +1,19 @@
 /**
  * The Card Editor (PRD §18). Autosave is debounced and silent (§65): the working state is saved as a
  * draft within a second of each change and turned into a named version at meaningful moments — on
- * ⌘S, after a pause, when leaving, or before review actions. Undo/redo is session-local (§66).
+ * ⌘S, after a pause, when leaving, or before Export. Undo/redo is session-local (§66).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, Cloud, CloudOff, Download, Loader2, Minus, Plus, Redo2, ThumbsDown, ThumbsUp, Undo2 } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Check, ChevronDown, Cloud, CloudOff, Download, Loader2, Minus, MonitorSmartphone, Plus, Redo2, Undo2 } from 'lucide-react';
 import { diffOverrides, resizeDesign } from '@acs/renderer';
-import type { BatchAction, RejectTag, Scope } from '@acs/types';
 import { api } from '../lib/api';
 import { builtinUrl } from '../lib/builtins';
 import type { AssetX, CardBundle } from '../lib/types';
-import { Button, cx, IconButton, Kbd, Menu, MenuItem, MenuSeparator, Spinner, StatusPill } from '../ui';
+import { Button, cx, IconButton, Menu, MenuItem, Spinner } from '../ui';
 import { AssetPicker } from '../components/AssetPicker';
-import { ExportDialog } from '../components/ExportDialog';
-import { RejectDialog } from '../components/RejectDialog';
 import { ResizeDialog, type ResizeChoice } from '../components/ResizeDialog';
 import { EditorCanvas, type Boxes } from './Canvas';
 import { EditorContext, type EditorCtx } from './context';
@@ -24,10 +21,22 @@ import { Inspector } from './inspector/Inspector';
 import { deleteOrHide, duplicateLayers, LeftPanel } from './LeftPanel';
 import { useEditor } from './store';
 import { GenerateDialog } from './ai/GenerateDialog';
-import { PromptBar } from './ai/PromptBar';
-import { pickProvider, planLabel, useConnections } from './ai/useAi';
+import { pickProvider, useConnections } from './ai/useAi';
+import { useDownload } from '../lib/download';
+import { LazyListingPreview } from '../listing';
 
 const IDLE_COMMIT_MS = 20_000;
+const SITE_PANEL_KEY = 'acs:editor-site-panel';
+
+/** Whether the arnifi.com preview panel is open: a per-viewer convenience, so browser storage. */
+function useSitePanel() {
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem(SITE_PANEL_KEY) === '1'; } catch { return false; } });
+  const toggle = () => setOpen((v) => {
+    try { localStorage.setItem(SITE_PANEL_KEY, v ? '0' : '1'); } catch { /* private window */ }
+    return !v;
+  });
+  return [open, toggle] as const;
+}
 
 export function EditorPage() {
   const { pid = '', cid = '' } = useParams();
@@ -41,12 +50,12 @@ export function EditorPage() {
   const zoom = useEditor((s) => s.zoom);
   const [boxes, setBoxes] = useState<Boxes>({});
   const [assets, setAssets] = useState<Map<string, AssetX>>(new Map());
-  const [dialog, setDialog] = useState<null | 'resize' | 'reject' | 'export' | 'generate' | 'edit-bg' | { pick: 'background' | 'image-layer' | 'logo' }>(null);
-  const [aiPreset, setAiPreset] = useState<{ text: string; layerId?: string; intentHint?: string; nonce: number } | null>(null);
-  const [genPrompt, setGenPrompt] = useState('');
+  const [dialog, setDialog] = useState<null | 'resize' | 'generate' | { pick: 'background' | 'image-layer' | 'logo' }>(null);
+  const { download, busy: downloading } = useDownload();
   const loadedFor = useRef<string | null>(null);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { data: conns } = useConnections();
+  const [sitePanel, toggleSitePanel] = useSitePanel();
 
   // load / reload the card into the store (keeps unsaved local edits when the server echoes back)
   useEffect(() => {
@@ -113,22 +122,11 @@ export function EditorPage() {
     return () => { window.removeEventListener('beforeunload', flush); flush(); };
   }, [pid, cid]);
 
-  // ---------------------------------------------------------------- review actions
-  const approve = useMutation({
-    mutationFn: async () => { await saveDraft(); return api.post(`/projects/${pid}/cards/${cid}/approve`); },
-    onSuccess: () => { toast.success('Approved'); refetch(); qc.invalidateQueries({ queryKey: ['cards', pid] }); },
-    onError: (e) => toast.error(e.message),
-  });
-  const reject = useMutation({
-    mutationFn: async ({ tags, text }: { tags: RejectTag[]; text: string }) => { await saveDraft(); return api.post(`/projects/${pid}/cards/${cid}/reject`, { tags, text }); },
-    onSuccess: () => { toast.success('Rejected: feedback saved for regeneration'); setDialog(null); refetch(); qc.invalidateQueries({ queryKey: ['cards', pid] }); },
-    onError: (e) => toast.error(e.message),
-  });
-  const batch = useMutation({
-    mutationFn: (b: { scope: Exclude<Scope, 'card'>; op: BatchAction }) => api.post<{ changed: number; skippedApproved: number }>(`/projects/${pid}/batch`, { cardIds: [cid], scope: b.scope, op: b.op }),
-    onSuccess: (r) => { toast.success(`${r.changed} card${r.changed === 1 ? '' : 's'} updated${r.skippedApproved ? ` · ${r.skippedApproved} approved left as they are` : ''}`); refetch(); qc.invalidateQueries({ queryKey: ['cards', pid] }); },
-    onError: (e) => toast.error(e.message),
-  });
+  // Export: save what is on the canvas as a version, then download it. No dialog, no approval.
+  const exportCard = async () => {
+    await commit();
+    await download(pid, { cardIds: [cid] }, 1);
+  };
 
   const doResize = async (c: ResizeChoice) => {
     await commit();                                   // the previous size is kept as its own version
@@ -202,35 +200,32 @@ export function EditorPage() {
   // assets referenced by the design that the bundle didn't include (picked from the library)
   useEffect(() => {
     if (!design) return;
-    const missing = design.layers.flatMap((l) => (l.type === 'background' || l.type === 'image') && l.assetId && !assets.has(l.assetId) ? [l.assetId] : l.type === 'logo' && !l.src.startsWith('builtin:') && !assets.has(l.src) ? [l.src] : []);
+    const missing = design.layers.flatMap((l) => (l.type === 'background' || l.type === 'image') && l.assetId && !assets.has(l.assetId) ? [l.assetId]
+      : l.type === 'logo' && !l.src.startsWith('builtin:') && !assets.has(l.src) ? [l.src]
+        : l.type === 'gradient' ? l.fills.flatMap((f) => ((f.kind === 'image' || f.kind === 'pattern') && !f.src.startsWith('builtin:') && !assets.has(f.src) ? [f.src] : [])) : []);
     if (!missing.length) return;
     void api.post<AssetX[]>('/assets/resolve', { ids: missing }).then((list) => setAssets((m) => { const n = new Map(m); for (const a of list) n.set(a.id, a); return n; }));
   }, [design, assets]);
 
   const project = bundle?.project;
-  const textConn = pickProvider(conns, project?.provider ?? 'auto', 'textGeneration');
-  const visionConn = pickProvider(conns, project?.provider ?? 'auto', 'visionAnalysis');
   const imageConn = pickProvider(conns, project?.provider ?? 'auto', 'imageGeneration');
 
   const ctx: EditorCtx | null = useMemo(() => bundle ? ({
     bundle, assets, boxes,
     pickImage: (purpose) => setDialog({ pick: purpose }),
-    applyBeyond: (scope, op) => batch.mutate({ scope, op: op as BatchAction }),
     commit,
     openResize: () => setDialog('resize'),
     focusText: (id) => { useEditor.getState().select([id]); setTimeout(() => document.getElementById(`text-${id}`)?.focus(), 30); },
-    aiAvailable: { text: !!textConn, vision: !!visionConn, image: !!imageConn, provider: textConn?.provider ?? imageConn?.provider ?? null, planLabel: planLabel(textConn ?? imageConn) },
-    runAi: (text, opts = {}) => {
-      if (opts.intentHint === 'GENERATE_BACKGROUND' || opts.intentHint === 'GENERATE_VARIATIONS') { setGenPrompt(text); setDialog('generate'); return; }
-      if (opts.intentHint === 'EDIT_BACKGROUND') { setGenPrompt(text); setDialog('edit-bg'); return; }
-      setAiPreset({ text: opts.intentHint === 'PROMPT' ? '' : text, layerId: opts.layerId, intentHint: opts.intentHint === 'PROMPT' ? undefined : opts.intentHint, nonce: Date.now() });
-    },
-  }) : null, [bundle, assets, boxes, commit, batch, textConn, visionConn, imageConn]);
+    canGenerate: !!imageConn,
+    generateBackground: () => setDialog('generate'),
+  }) : null, [bundle, assets, boxes, commit, imageConn]);
 
   if (error) return <div className="flex h-full flex-col items-center justify-center gap-3 text-[14px]"><AlertTriangle className="size-6 text-warn" />{(error as Error).message}<Link to={`/p/${pid}`}><Button>Back to the project</Button></Link></div>;
   if (!bundle || !ctx || !design) return <div className="flex h-full items-center justify-center"><Spinner /></div>;
   const card = bundle.card;
-  const approvedV = bundle.versions.find((v) => v.id === card.approvedVersionId);
+  const bgLayer = design.layers.find((l) => l.type === 'background');
+  const bgAsset = bgLayer?.type === 'background' && bgLayer.assetId ? assets.get(bgLayer.assetId) : undefined;
+  const bgPhoto = bgAsset?.width ? { width: bgAsset.width, height: bgAsset.height } : null;
 
   return (
     <EditorContext.Provider value={ctx}>
@@ -241,8 +236,6 @@ export function EditorPage() {
             <Link to={`/p/${pid}`} className="hidden truncate text-[13px] text-muted hover:text-ink md:block">{project?.name}</Link>
             <span className="text-faint">/</span>
             <span className="truncate text-[13.5px] font-semibold" data-testid="card-name">{card.name}</span>
-            <StatusPill status={card.status} />
-            {approvedV && approvedV.id !== card.currentVersionId ? <span className="text-[11.5px] text-muted">Approved: V{approvedV.number}</span> : null}
           </div>
           <SaveIndicator />
           <div className="mx-auto flex items-center gap-1">
@@ -262,15 +255,8 @@ export function EditorPage() {
             </Menu>
             <IconButton size="sm" label="Zoom in (+)" onClick={() => (window as any).__acsCanvas?.zoomTo(zoom * 1.25)}><Plus className="size-3.5" /></IconButton>
           </div>
-          <Button size="sm" variant="ghost" icon={<ThumbsDown className="size-3.5" />} onClick={() => setDialog('reject')}>Reject</Button>
-          <Button size="sm" variant={card.status === 'approved' && card.approvedVersionId === card.currentVersionId && saveState === 'saved' ? 'subtle' : 'secondary'} icon={<ThumbsUp className="size-3.5" />} loading={approve.isPending} onClick={() => approve.mutate()} data-testid="approve">
-            {card.status === 'approved' && card.approvedVersionId === card.currentVersionId && saveState === 'saved' ? 'Approved' : 'Approve'}
-          </Button>
-          <Menu trigger={<Button size="sm" variant="primary" icon={<Download className="size-3.5" />}>Export</Button>}>
-            <MenuItem onSelect={() => setDialog('export')}>Export this card…</MenuItem>
-            <MenuSeparator />
-            <MenuItem onSelect={() => void commit().then(() => toast.success('Saved as a version'))} shortcut="⌘S">Save a version now</MenuItem>
-          </Menu>
+          <Button size="sm" variant={sitePanel ? 'subtle' : 'ghost'} icon={<MonitorSmartphone className="size-3.5" />} aria-pressed={sitePanel} onClick={toggleSitePanel} data-testid="site-preview-toggle">On arnifi.com</Button>
+          <Button size="sm" variant="primary" icon={<Download className="size-3.5" />} loading={downloading} onClick={() => void exportCard()} data-testid="export">Export</Button>
         </header>
 
         <div className="flex min-h-0 flex-1">
@@ -278,20 +264,18 @@ export function EditorPage() {
           <div className="flex min-w-0 flex-1 flex-col">
             <EditorCanvas resolveSrc={resolveSrc} onBoxes={setBoxes} onTextDoubleClick={(id) => ctx.focusText(id)}
               assetSize={(id) => { const a = id ? assets.get(id) : null; return a && a.width ? { width: a.width, height: a.height } : null; }} />
-            <PromptBar presetText={aiPreset} />
           </div>
+          {sitePanel ? (
+            <aside className="w-[520px] shrink-0 overflow-y-auto border-l border-line bg-canvas p-3 scroll-quiet" aria-label="How it looks on arnifi.com">
+              <LazyListingPreview title={card.name} items={[{ key: card.id, label: card.name, media: { kind: 'design', design, resolveSrc, photo: bgPhoto } }]} />
+            </aside>
+          ) : null}
           <Inspector />
-        </div>
-        <div className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-panel px-3 text-[11px] text-faint">
-          <span><Kbd>⌘Z</Kbd> undo</span><span><Kbd>⇧</Kbd>+<Kbd>←</Kbd> nudge 10</span><span><Kbd>⌘D</Kbd> duplicate</span><span><Kbd>0</Kbd> fit</span><span><Kbd>1</Kbd> 100%</span><span><Kbd>Space</Kbd> pan</span><span><Kbd>Alt</Kbd> no snapping</span>
-          <span className="ml-auto">{bundle.versions.length} versions</span>
         </div>
       </div>
 
       {dialog === 'resize' ? <ResizeDialog open onOpenChange={() => setDialog(null)} initial={{ width: design.canvas.width, height: design.canvas.height }} onResize={doResize} /> : null}
-      {dialog === 'reject' ? <RejectDialog open onOpenChange={() => setDialog(null)} busy={reject.isPending} onReject={(tags, text) => reject.mutate({ tags, text })} /> : null}
-      {dialog === 'export' ? <ExportDialog open onOpenChange={() => setDialog(null)} projectId={pid} cardIds={[cid]} defaultScope="current" namingTemplate={project?.namingTemplate} /> : null}
-      {dialog === 'generate' || dialog === 'edit-bg' ? <GenerateDialog open onOpenChange={() => setDialog(null)} projectId={pid} cardIds={[cid]} initialPrompt={genPrompt} mode={dialog === 'edit-bg' ? 'edit' : 'generate'}
+      {dialog === 'generate' ? <GenerateDialog open onOpenChange={() => setDialog(null)} projectId={pid} cardIds={[cid]}
         onUsed={() => { loadedFor.current = null; void refetch(); }} /> : null}
       {dialog && typeof dialog === 'object' ? (
         <AssetPicker open onOpenChange={() => setDialog(null)} projectId={pid} title={dialog.pick === 'logo' ? 'Choose a logo' : dialog.pick === 'image-layer' ? 'Add an image layer' : 'Replace the background'}

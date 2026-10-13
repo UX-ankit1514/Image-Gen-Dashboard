@@ -78,44 +78,28 @@ export async function queueIngest(ctx: Ctx, asset: Asset, extra: Record<string, 
 }
 
 // ---------------------------------------------------------------- exports (PRD §67–68)
-export class NeedsConfirmation extends Error {
-  constructor(public unapproved: number, public total: number) {
-    super(`${unapproved} selected card${unapproved === 1 ? ' is' : 's are'} not approved.`);
-  }
-}
-
 export async function createExport(ctx: Ctx, projectId: string, body: ExportBody) {
   const project = await getProject(ctx, projectId);
   const cards = (await ctx.db.query<Card>(P.cards(projectId), { orderBy: [['order', 'asc']] })).filter((c) => c.status !== 'archived');
-  let chosen: Card[];
-  if (body.scope === 'approved') chosen = cards.filter((c) => c.approvedVersionId);
-  else if (body.scope === 'all') chosen = cards;
-  else chosen = cards.filter((c) => (body.cardIds ?? []).includes(c.id));
-  if (!chosen.length) throw invalid(body.scope === 'approved' ? 'No cards are approved yet.' : 'No cards selected.');
+  const chosen = body.scope === 'all' ? cards : cards.filter((c) => (body.cardIds ?? []).includes(c.id));
+  if (!chosen.length) throw invalid('No cards selected.');
 
-  const files = chosen.flatMap((c) => {
-    // the approved version is the production file; anything else only with explicit consent
-    if (c.approvedVersionId && (!body.includeUnapproved || c.status === 'approved' || c.status === 'exported')) {
-      return [{ cardId: c.id, versionId: c.approvedVersionId, name: '', key: '', approved: true }];
-    }
-    if (!c.currentVersionId) return [];
-    return [{ cardId: c.id, versionId: c.currentVersionId, name: '', key: '', approved: false }];
-  });
-  const unapproved = files.filter((f) => !f.approved).length;
-  if (unapproved && !body.includeUnapproved) throw new NeedsConfirmation(unapproved, files.length);
+  // Export is what you see: every card's current version (approval no longer decides what ships).
+  const files = chosen.filter((c) => c.currentVersionId).map((c) => ({ cardId: c.id, versionId: c.currentVersionId!, name: '', key: '', approved: false }));
+  if (!files.length) throw invalid('This card has no saved version yet. Make a change, then try again.');
 
   const t = nowIso();
   const rec: ExportRecord = {
     id: newId('exp'), projectId, scope: body.scope, format: body.format, scale: body.scale, cardIds: chosen.map((c) => c.id),
-    includesUnapproved: unapproved, status: 'queued', jobId: null, zipKey: null, files,
-    options: { contactSheet: body.contactSheet, csv: body.csv, manifest: body.manifest, namingTemplate: body.namingTemplate || project.namingTemplate },
+    includesUnapproved: 0, status: 'queued', jobId: null, zipKey: null, files,
+    options: { contactSheet: !!body.contactSheet, csv: !!body.csv, manifest: !!body.manifest, namingTemplate: body.namingTemplate || project.namingTemplate },
     error: null, createdAt: t, completedAt: null,
   };
   const job = makeJob(ctx, { type: 'export', projectId, input: { exportId: rec.id } });
   rec.jobId = job.id;
   await ctx.db.commit([{ kind: 'create', path: P.export(rec.id), data: rec }, jobOp(job)]);
   if (body.namingTemplate && body.namingTemplate !== project.namingTemplate) await updateProject(ctx, projectId, { namingTemplate: body.namingTemplate });
-  await audit(ctx, 'export.created', 'project', projectId, { exportId: rec.id, files: files.length, unapproved, format: body.format, scale: body.scale });
+  await audit(ctx, 'export.created', 'project', projectId, { exportId: rec.id, files: files.length, format: body.format, scale: body.scale });
   return rec;
 }
 
