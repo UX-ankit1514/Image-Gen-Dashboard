@@ -16,7 +16,7 @@ const PROVIDER: Record<string, string> = { chatgpt: 'ChatGPT', claude: 'Claude',
 
 export function ProjectsPage() {
   const [view, setView] = useState<'active' | 'archived'>('active');
-  const { data, isLoading } = useProjects(view === 'archived');
+  const { data, isLoading, error } = useProjects(view === 'archived');
   const navigate = useNavigate();
   const [paste, setPaste] = useState(false);
   const [url, setUrl] = useState('');
@@ -41,6 +41,8 @@ export function ProjectsPage() {
         <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 px-8 pt-4">
           {Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton h-[268px] rounded-xl" />)}
         </div>
+      ) : error ? (
+        <Empty icon={<FolderOpen className="size-8" strokeWidth={1.5} />} title="Couldn't load projects">{error.message}</Empty>
       ) : projects.length ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 px-8 pt-4">
           {projects.map((p) => <ProjectCard key={p.id} p={p} />)}

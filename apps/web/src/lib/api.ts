@@ -50,6 +50,6 @@ export const api = {
 
 export const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { staleTime: 15_000, refetchOnWindowFocus: false, retry: (n, e) => !(e instanceof ApiError && e.status < 500) && n < 2 },
+    queries: { staleTime: 15_000, refetchOnWindowFocus: false, retry: (n, e) => !(e instanceof ApiError && (e.status < 500 || e.data.code === 'not_configured')) && n < 2 },
   },
 });
