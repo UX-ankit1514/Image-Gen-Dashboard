@@ -5,12 +5,13 @@ import { api } from '../../lib/api';
 
 export interface ConnectionsView {
   connections: ProviderConnection[];
-  companion: { paired: boolean; online: boolean; devices: { id: string; name: string; lastSeenAt: string | null }[] };
+  companion: { paired: boolean; online: boolean; devices: { id: string; name: string; lastSeenAt: string | null; codexInstalled?: boolean | null }[] };
   oauth: { openai: boolean };
 }
 
-export const useConnections = () =>
-  useQuery({ queryKey: ['connections'], queryFn: () => api.get<ConnectionsView>('/connections'), refetchInterval: 20_000 });
+/** `fast` while something is about to change (a sign-in in progress, a companion being paired). */
+export const useConnections = (fast = false) =>
+  useQuery({ queryKey: ['connections'], queryFn: () => api.get<ConnectionsView>('/connections'), refetchInterval: fast ? 2000 : 20_000 });
 
 export type Need = keyof Pick<ProviderCapabilities, 'textGeneration' | 'visionAnalysis' | 'imageGeneration' | 'imageEditing' | 'structuredOutput'>;
 

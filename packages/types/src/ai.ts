@@ -40,6 +40,9 @@ export interface ProviderConnection {
   deviceId: string | null;
   cli: { installed: boolean; version: string | null; authMethod: string | null } | null;
   usageLimit: { reached: boolean; resetAt: string | null; message: string | null } | null;
+  /** "Sign in with ChatGPT" from the dashboard: the companion runs the official CLI's own browser
+   *  sign-in on the Mac. requested → (companion picks it up) opened → cleared, or failed. */
+  signIn?: { state: 'requested' | 'opened' | 'failed'; at: string; deviceId: string | null; message: string | null } | null;
   /** Cloud OAuth only, AES-GCM encrypted at rest; refresh tokens never leave the server. */
   tokens?: { iv: string; data: string } | null;
   lastCheckedAt: string | null;

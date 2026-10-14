@@ -6,10 +6,10 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import {
-  addReference, chooseProvider, claimCompanionJob, composePreview, connectionsView, createConsistencyJob, createGenerateJobs, createPairingCode, createPromptJob,
+  addReference, chooseProvider, claimCompanionJob, claimSignIn, composePreview, connectionsView, createConsistencyJob, createGenerateJobs, createPairingCode, createPromptJob,
   listSuggestions, resolveSuggestion,
-  deviceFromToken, finishCompanionJob, getCard, getConnections, getProject, heartbeat, P, pairDevice, queueIngest, recordGeneratedAsset,
-  revokeDevice, setProviderEnabled, useGenerated, type CompanionReport, type Device,
+  deviceFromToken, finishCompanionJob, finishSignIn, getCard, getConnections, getProject, heartbeat, P, pairDevice, queueIngest, recordGeneratedAsset,
+  requestSignIn, revokeDevice, setProviderEnabled, useGenerated, type CompanionReport, type Device,
 } from '@acs/firestore';
 import { analysisTask, authorizeUrl, exchangeCode, oauthConfig, revokeToken, type AiTask } from '@acs/providers';
 import { decryptJson, encryptJson, IMAGE_EXT, IMAGE_MIME, invalid, MAX_UPLOAD_BYTES, newId, notFound, nowIso, pkcePair, randomToken, sniffImage, UPLOAD_KINDS } from '@acs/shared';
@@ -28,6 +28,9 @@ ai.get('/connections', async (c) => {
 });
 
 ai.post('/connections/pairing-code', async (c) => c.json(await createPairingCode(ctxFor(c.env))));
+
+/** "Sign in with ChatGPT": the paired companion opens ChatGPT's own sign-in page on the Mac. */
+ai.post('/connections/openai/sign-in', async (c) => c.json({ ...await requestSignIn(ctxFor(c.env), 'openai'), oauth: { openai: !!oauthConfig(c.env) } }));
 
 ai.post('/connections/:provider/:action{enable|disable}', async (c) => {
   const id = c.req.param('provider');
@@ -226,6 +229,9 @@ ai.post('/companion/jobs/next', async (c) => {
   const ctx = ctxFor(c.env, `device:${d.id}`);
   await ctx.db.update(P.device(d.id), { lastSeenAt: nowIso() });
   const conns = await getConnections(ctx);
+  // a sign-in asked for in the dashboard comes first: nothing else can run until the CLI is signed in
+  const signIn = await claimSignIn(ctx, conns, d.id);
+  if (signIn) return c.json({ job: null, signIn });
   const enabled = new Set(conns.filter((x) => x.status !== 'disconnected' && !(x as { disabled?: boolean }).disabled).map((x) => x.id));
   const job = await claimCompanionJob(ctx.db, d.id, b.types);
   if (!job) return c.json({ job: null });
@@ -239,6 +245,13 @@ ai.post('/companion/jobs/next', async (c) => {
 });
 
 /** The companion asks while a job runs: a run cancelled from the dashboard stops the image in progress. */
+ai.post('/companion/sign-in/result', async (c) => {
+  const d = await device(c);
+  const b = await body(c, z.object({ provider: z.literal('openai'), ok: z.boolean(), message: z.string().max(500).nullable().optional() }));
+  await finishSignIn(ctxFor(c.env, `device:${d.id}`), d.id, b.ok, b.message ?? null);
+  return c.json({ ok: true });
+});
+
 ai.post('/companion/jobs/:jid/state', async (c) => {
   const d = await device(c);
   const ctx = ctxFor(c.env, `device:${d.id}`);

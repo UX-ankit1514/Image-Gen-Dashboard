@@ -1,19 +1,20 @@
 /**
  * AI Connections (PRD §58–62). Bring your own subscription: ChatGPT and Claude connect through the
  * official CLIs on a paired Local Companion. No API keys, no passwords, no cookies — and never a
- * silent switch to paid API usage.
+ * silent switch to paid API usage. "Sign in with ChatGPT" asks the companion to open ChatGPT's own
+ * sign-in page on the Mac (the Codex CLI's login); the sign-in never passes through Creative Studio.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Check, Copy, Laptop, Link2, Minus, Plug, ShieldCheck, X } from 'lucide-react';
+import { AlertTriangle, Check, CircleCheck, Copy, Laptop, Link2, Loader2, LogIn, Minus, Plug, ShieldCheck, X } from 'lucide-react';
 import type { ProviderConnection } from '@acs/types';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { PageHeader } from '../shell/AppShell';
 import { Badge, Button, cx, Dialog, Spinner } from '../ui';
-import { useConnections } from '../editor/ai/useAi';
+import { useConnections, type ConnectionsView } from '../editor/ai/useAi';
 
 const NAME = { openai: 'ChatGPT', claude: 'Claude' } as const;
 const MANAGE = { openai: 'https://chatgpt.com/#settings/Subscription', claude: 'https://claude.ai/settings/usage' } as const;
@@ -37,10 +38,11 @@ function Cap({ label, value }: { label: string; value: 'yes' | 'no' | 'depends' 
 }
 
 export function ConnectionsPage() {
-  const { data, isLoading } = useConnections();
+  const [connecting, setConnecting] = useState(false);
+  const [pairing, setPairing] = useState<{ code: string; expiresAt: string } | null>(null);
+  const { data, isLoading } = useConnections(connecting || !!pairing);
   const [params, setParams] = useSearchParams();
   const qc = useQueryClient();
-  const [pairing, setPairing] = useState<{ code: string; expiresAt: string } | null>(null);
   const [welcome, setWelcome] = useState<'openai' | 'claude' | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ['connections'] });
   const code = useMutation({ mutationFn: () => api.post<{ code: string; expiresAt: string }>('/connections/pairing-code'), onSuccess: setPairing, onError: (e) => toast.error(e.message) });
@@ -54,7 +56,8 @@ export function ConnectionsPage() {
     if (connected) { setWelcome(connected); setParams({}); return; }
     for (const c of data.connections) {
       const k = `acs-welcomed-${c.id}`;
-      try { if (c.status === 'connected' && !localStorage.getItem(k)) { localStorage.setItem(k, '1'); setWelcome(c.provider); break; } } catch { /* storage blocked */ }
+      // the sign-in dialog says the same thing itself
+      try { if (c.status === 'connected' && !localStorage.getItem(k)) { localStorage.setItem(k, '1'); if (!connecting) setWelcome(c.provider); break; } } catch { /* storage blocked */ }
     }
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -80,7 +83,7 @@ export function ConnectionsPage() {
                 {c.status === 'connected' ? <Badge tone="ok">{c.provider === 'openai' ? 'Using ChatGPT plan' : c.planLabel ?? 'Claude plan'}</Badge> : null}
               </div>
               {c.accountLabel ? <div className="mt-2 text-[12.5px] text-muted">Account: {c.accountLabel}</div> : null}
-              {c.cli?.version ? <div className="text-[12px] text-faint">{c.provider === 'claude' ? 'Claude Code' : 'Codex CLI'} {c.cli.version} · signed in with {c.cli.authMethod ?? '—'}</div> : null}
+              {c.cli?.version && c.deviceId ? <div className="text-[12px] text-faint">{c.provider === 'claude' ? 'Claude Code' : 'Codex CLI'} {c.cli.version} · {c.cli.authMethod ? `signed in with ${c.cli.authMethod}` : 'not signed in'}</div> : null}
               <div className="mt-4 border-t border-line pt-2">
                 <Cap label={c.provider === 'claude' ? 'Reasoning' : 'Text reasoning'} value={caps.textGeneration ? 'yes' : 'off'} />
                 <Cap label="Vision" value={caps.visionAnalysis ? 'yes' : 'off'} />
@@ -92,10 +95,12 @@ export function ConnectionsPage() {
                 {c.status === 'disconnected' && (c as { disabled?: boolean }).disabled
                   ? <Button size="sm" onClick={() => toggle.mutate({ id: c.id, on: true })}>Reconnect</Button>
                   : c.status !== 'disconnected' ? <Button size="sm" variant="danger" onClick={() => toggle.mutate({ id: c.id, on: false })}>Disconnect</Button> : null}
+                {c.provider === 'openai' && c.status !== 'connected' && !(c as { disabled?: boolean }).disabled
+                  ? <Button size="sm" variant="primary" icon={<LogIn className="size-3.5" />} onClick={() => setConnecting(true)} data-testid="chatgpt-sign-in">Sign in with ChatGPT</Button> : null}
                 {c.provider === 'openai' && data.oauth.openai ? <a href="/api/connections/openai/oauth/start"><Button size="sm" variant="primary">Continue with ChatGPT</Button></a> : null}
               </div>
-              {c.provider === 'openai' && !data.oauth.openai ? (
-                <p className="mt-3 text-[12px] leading-relaxed text-muted">Cloud “Sign in with ChatGPT” needs an OpenAI-approved integration; until then ChatGPT connects through the companion, using the official Codex CLI signed in with your ChatGPT plan.</p>
+              {c.provider === 'openai' ? (
+                <p className="mt-3 text-[12px] leading-relaxed text-muted">Signing in opens ChatGPT’s own sign-in page on your Mac, through the companion and the official Codex CLI. Your password and tokens stay with ChatGPT and the CLI; generation then uses your ChatGPT plan.</p>
               ) : null}
               {c.provider === 'claude' ? <p className="mt-3 text-[12px] leading-relaxed text-muted">Claude runs through Claude Code on your Mac, signed in with your Claude subscription. It reads and writes; it does not generate images.</p> : null}
             </div>
@@ -130,6 +135,8 @@ export function ConnectionsPage() {
         </div>
       </section>
 
+      {connecting ? <ConnectChatGpt view={data} origin={origin} onClose={() => setConnecting(false)} /> : null}
+
       <Dialog open={!!pairing} onOpenChange={(v) => !v && setPairing(null)} title="Pair the Local Companion" width={560}
         footer={<Button variant="primary" onClick={() => setPairing(null)}>Done</Button>}>
         {pairing ? (
@@ -150,6 +157,99 @@ export function ConnectionsPage() {
         <p className="text-[13.5px]">Eligible AI requests in Creative Studio will use your existing {welcome === 'openai' ? 'ChatGPT' : 'Claude'} allowance. Creative Studio does not provide unlimited AI usage, and it never switches to paid API billing.</p>
       </Dialog>
     </div>
+  );
+}
+
+/** One step of the ChatGPT connection, numbered, with a tick once it is done. */
+function Step({ n, title, done, children }: { n: number; title: string; done: boolean; children?: ReactNode }) {
+  return (
+    <div className="flex gap-3">
+      <span className={cx('mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold', done ? 'bg-ok text-white' : 'bg-hover text-ink')}>
+        {done ? <Check className="size-3.5" strokeWidth={3} /> : n}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-[14px] font-semibold">{title}</div>
+        {children ? <div className="mt-1.5 flex flex-col gap-2 text-[13px] text-muted">{children}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Sign in with ChatGPT": 1. the companion runs on this Mac (paired with this site), 2. it opens
+ * ChatGPT's sign-in in the browser and reports back. When the companion is already running, the
+ * click goes straight to the sign-in.
+ */
+function ConnectChatGpt({ view, origin, onClose }: { view: ConnectionsView; origin: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const openai = view.connections.find((c) => c.provider === 'openai')!;
+  const online = view.companion.online;
+  const device = view.companion.devices.find((d) => d.lastSeenAt && Date.now() - Date.parse(d.lastSeenAt) < 3 * 60_000) ?? view.companion.devices[0];
+  const noCli = online && device?.codexInstalled === false;
+  const connected = openai.status === 'connected';
+  const s = openai.signIn ?? null;
+  const [asked, setAsked] = useState(false);
+  const code = useMutation({ mutationFn: () => api.post<{ code: string; expiresAt: string }>('/connections/pairing-code') });
+  const signIn = useMutation({
+    mutationFn: () => api.post<ConnectionsView>('/connections/openai/sign-in'),
+    onSuccess: (v) => { qc.setQueryData(['connections'], v); setAsked(true); },
+    onError: (e) => toast.error(e.message),
+  });
+  // a pairing code is only needed when no companion runs; asked once per dialog
+  useEffect(() => { if (!view.companion.paired) code.mutate(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // the companion is up and ChatGPT isn't signed in: the click on "Sign in with ChatGPT" means go
+  useEffect(() => {
+    if (online && !noCli && !connected && !asked && !signIn.isPending && s?.state !== 'requested' && s?.state !== 'opened') signIn.mutate();
+  }, [online, noCli, connected]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (connected) toast.success('ChatGPT is connected'); }, [connected]);
+
+  const pending = s?.state === 'requested' || s?.state === 'opened' || signIn.isPending;
+  const mac = device?.name ? `“${device.name}”` : 'your Mac';
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()} width={560} title="Sign in with ChatGPT"
+      description="Generation uses your own ChatGPT plan. Creative Studio never sees your password or asks for an API key."
+      footer={<Button variant="primary" onClick={onClose}>{connected ? 'Done' : 'Close'}</Button>}>
+      <div className="flex flex-col gap-5" data-testid="connect-chatgpt">
+        <Step n={1} title={online ? `The companion is running on ${mac}` : 'Start the companion on your Mac'} done={online}>
+          {online ? null : view.companion.paired ? (
+            <>
+              <span>It is paired but not running. In the Creative Studio folder on your Mac, run:</span>
+              <CopyLine text="npm run companion" />
+            </>
+          ) : (
+            <>
+              <span>In the Creative Studio folder on your Mac, run this once:</span>
+              {code.data ? <CopyLine text={`npm run companion -- pair --url ${origin} --code ${code.data.code}`} /> : <Spinner className="size-4" />}
+              <span>then keep it running with <code className="rounded bg-hover px-1">npm run companion</code>. If it already runs for another site, it picks this up by itself. This window moves on when it checks in.</span>
+            </>
+          )}
+          {!online ? <span className="flex items-center gap-1.5 text-[12px]"><Loader2 className="size-3 animate-spin" />Waiting for the companion…</span> : null}
+        </Step>
+
+        <Step n={2} title={connected ? 'Signed in with ChatGPT' : 'Sign in with ChatGPT'} done={connected}>
+          {connected ? <span className="flex items-center gap-1.5 text-ok"><CircleCheck className="size-3.5" />Connected. Generation now uses your ChatGPT plan.</span>
+            : !online ? <span>Next, ChatGPT’s sign-in page opens in your browser.</span>
+            : noCli ? (
+              <>
+                <span>The Codex CLI isn’t installed on {mac}. Install it, then try again:</span>
+                <CopyLine text="npm i -g @openai/codex" />
+                <div><Button size="sm" onClick={() => signIn.mutate()} loading={signIn.isPending}>Try again</Button></div>
+              </>
+            ) : s?.state === 'failed' && !signIn.isPending ? (
+              <>
+                <span className="flex items-start gap-1.5 text-err"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{s.message}</span>
+                <div><Button size="sm" variant="primary" icon={<LogIn className="size-3.5" />} onClick={() => signIn.mutate()}>Try again</Button></div>
+              </>
+            ) : pending ? (
+              <span className="flex items-start gap-1.5"><Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+                {s?.state === 'opened' ? `ChatGPT’s sign-in page is open in the browser on ${mac}. Sign in there and come back; this updates by itself.` : `Asking ${mac} to open ChatGPT’s sign-in page…`}
+              </span>
+            ) : (
+              <div><Button size="sm" variant="primary" icon={<LogIn className="size-3.5" />} onClick={() => signIn.mutate()}>Sign in with ChatGPT</Button></div>
+            )}
+        </Step>
+      </div>
+    </Dialog>
   );
 }
 

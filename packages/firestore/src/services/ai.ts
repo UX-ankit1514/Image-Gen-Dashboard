@@ -51,17 +51,66 @@ export async function getConnections(ctx: Ctx) {
   return [rows[0] ?? emptyConnection('openai'), rows[1] ?? emptyConnection('claude')];
 }
 
+/** How long a sign-in may wait for the companion to pick it up, and for the person to finish it. */
+const SIGN_IN_PICKUP_MS = 2 * 60_000;
+const SIGN_IN_OPEN_MS = 6 * 60_000;
+
+/** A sign-in nobody finished is shown as failed, without writing anything. */
+function signInView(s: ProviderConnection['signIn']): ProviderConnection['signIn'] {
+  if (!s) return null;
+  const age = Date.now() - Date.parse(s.at);
+  if (s.state === 'requested' && age > SIGN_IN_PICKUP_MS) return { ...s, state: 'failed', message: "The companion didn't pick up the sign-in. Check that it is running on your Mac, then try again." };
+  if (s.state === 'opened' && age > SIGN_IN_OPEN_MS) return { ...s, state: 'failed', message: 'The ChatGPT sign-in was not finished. Try again.' };
+  return s;
+}
+
 export async function connectionsView(ctx: Ctx) {
   const [connections, devices] = await Promise.all([getConnections(ctx), ctx.db.query<Device>(P.devices)]);
   const live = devices.filter((d) => !d.revokedAt);
   const online = live.some((d) => d.lastSeenAt && Date.now() - Date.parse(d.lastSeenAt) < ONLINE_MS);
   // a companion that went quiet can't run anything: show it, don't pretend
   const shown = connections.map((c) => (c.mode === 'local-companion' && c.status === 'connected' && !online ? { ...c, status: 'unavailable' as const } : c))
-    .map(({ tokens: _t, ...rest }) => rest);
+    .map(({ tokens: _t, ...rest }) => ({ ...rest, signIn: signInView(rest.signIn) }));
   return {
     connections: shown,
-    companion: { paired: live.length > 0, online, devices: live.map((d) => ({ id: d.id, name: d.name, platform: d.platform, lastSeenAt: d.lastSeenAt, version: d.report?.version ?? null })) },
+    companion: {
+      paired: live.length > 0, online,
+      devices: live.map((d) => ({ id: d.id, name: d.name, platform: d.platform, lastSeenAt: d.lastSeenAt, version: d.report?.version ?? null, codexInstalled: d.report?.codex.installed ?? null })),
+    },
   };
+}
+
+// ---------------------------------------------------------------- "Sign in with ChatGPT" via the companion
+/** The dashboard asks; the companion on the Mac opens ChatGPT's own sign-in page there (`codex login`).
+ *  Nothing about the sign-in passes through Creative Studio: it only learns, from the next heartbeat,
+ *  that the CLI is signed in with a ChatGPT plan. */
+export async function requestSignIn(ctx: Ctx, id: ProviderId) {
+  if (id !== 'openai') throw invalid('Only ChatGPT can be signed in from here.');
+  const view = await connectionsView(ctx);
+  if (!view.companion.online) throw invalid('Start the companion on your Mac first, then sign in.');
+  const [openai] = await getConnections(ctx);
+  const { disabled: _d, ...cur } = openai as ProviderConnection & { disabled?: boolean };
+  await ctx.db.set(P.connection('openai'), { ...cur, signIn: { state: 'requested', at: nowIso(), deviceId: null, message: null }, updatedAt: nowIso() });
+  return connectionsView(ctx);
+}
+
+/** The companion's poll: a pending sign-in goes to exactly one companion. */
+export async function claimSignIn(ctx: Ctx, conns: ProviderConnection[], deviceId: string): Promise<ProviderId | null> {
+  const s = conns.find((c) => c.id === 'openai')?.signIn;
+  if (!s || s.state !== 'requested' || Date.now() - Date.parse(s.at) > SIGN_IN_PICKUP_MS) return null;
+  return ctx.db.transaction(async (tx) => {
+    const fresh = await tx.get<ProviderConnection>(P.connection('openai'));
+    if (fresh?.signIn?.state !== 'requested') return null;
+    tx.update(P.connection('openai'), { signIn: { ...fresh.signIn, state: 'opened', deviceId, at: nowIso() } });
+    return 'openai' as const;
+  });
+}
+
+/** The CLI's sign-in ended. On success the heartbeat the companion sends first has already marked it connected. */
+export async function finishSignIn(ctx: Ctx, deviceId: string, ok: boolean, message: string | null) {
+  const [openai] = await getConnections(ctx);
+  if (openai.signIn?.deviceId !== deviceId) return;
+  await ctx.db.update(P.connection('openai'), { signIn: ok ? null : { ...openai.signIn, state: 'failed', at: nowIso(), message: message ?? 'The ChatGPT sign-in did not finish. Try again.' }, updatedAt: nowIso() });
 }
 
 // ---------------------------------------------------------------- pairing (PRD §61)

@@ -5,14 +5,16 @@
  *   npm run companion -- pair --url https://studio.example.com --code 123456 [--name "Ankit's Mac"]
  *   npm run companion            # run: heartbeat + take AI tasks
  *   npm run companion -- status  # what is installed and how it is signed in
- *   npm run companion -- unpair
+ *   npm run companion -- unpair [--url https://studio.example.com]
  *
+ * One companion can serve several Creative Studio sites (say localhost and the live site): each
+ * `pair` adds a site, and a running companion picks a new pairing up within seconds.
  * It detects Claude Code and the Codex CLI, confirms they are signed in with subscriptions, receives
  * approved tasks from the dashboard, runs them locally and returns structured results. It stores only
  * the dashboard URL and its device token (mode 600). It never reads or sends passwords, cookies or
  * provider tokens, and it never calls a provider's backend directly — only the official CLIs.
  */
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, hostname, platform, tmpdir } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import { ProviderError, type AIProvider, type AiTask } from '@acs/providers';
@@ -30,8 +32,20 @@ function arg(name: string) {
   return i > 0 ? process.argv[i + 1] : undefined;
 }
 
-function loadConfig(): Config | null {
-  try { return JSON.parse(readFileSync(CONFIG, 'utf8')); } catch { return null; }
+const originOf = (url: string) => new URL(url).origin;
+
+/** Every paired site. An older config held exactly one site at the top level. */
+function loadSites(): Config[] {
+  try {
+    const raw = JSON.parse(readFileSync(CONFIG, 'utf8')) as { sites?: Config[] } & Partial<Config>;
+    return Array.isArray(raw.sites) ? raw.sites : raw.url && raw.token ? [raw as Config] : [];
+  } catch { return []; }
+}
+
+function saveSites(sites: Config[]) {
+  mkdirSync(DIR, { recursive: true, mode: 0o700 });
+  writeFileSync(CONFIG, JSON.stringify({ sites }, null, 2), { mode: 0o600 });
+  chmodSync(CONFIG, 0o600);
 }
 
 function log(...a: unknown[]) {
@@ -77,10 +91,9 @@ async function pair() {
     console.error(`Pairing failed: ${data.error ?? res.status}`);
     process.exit(1);
   }
-  mkdirSync(DIR, { recursive: true, mode: 0o700 });
-  writeFileSync(CONFIG, JSON.stringify({ url, token: data.token, deviceId: data.deviceId ?? "", name } satisfies Config, null, 2), { mode: 0o600 });
-  chmodSync(CONFIG, 0o600);
-  console.log(`Paired as "${name}". Start it with: npm run companion`);
+  // a new pairing with the same site replaces the old one; other sites stay paired
+  saveSites([...loadSites().filter((s) => originOf(s.url) !== originOf(url)), { url, token: data.token, deviceId: data.deviceId ?? '', name }]);
+  console.log(`Paired with ${originOf(url)} as "${name}". If the companion is running it picks this up in a few seconds; otherwise start it with: npm run companion`);
   const r = await report();
   await call({ url, token: data.token }, '/companion/heartbeat', r);
   printStatus(r);
@@ -151,44 +164,80 @@ async function runJob(cfg: Config, job: WireJob) {
 }
 
 async function start() {
-  const cfg = loadConfig();
-  if (!cfg) {
-    console.error('Not paired. In the dashboard open AI Connections → Pair a companion, then run the pair command it shows.');
+  let sites = loadSites();
+  if (!sites.length) {
+    console.error('Not paired. In the dashboard open AI Connections → Connect ChatGPT (or Pair a companion), then run the pair command it shows.');
     process.exit(2);
   }
-  log(`Arnifi Local Companion ${VERSION} → ${cfg.url} as "${cfg.name}"`);
+  let configTime = existsSync(CONFIG) ? statSync(CONFIG).mtimeMs : 0;
+  log(`Arnifi Local Companion ${VERSION} as "${sites[0].name}" → ${sites.map((x) => originOf(x.url)).join(', ')}`);
   let state = await report();
   printStatus(state);
-  await call(cfg, '/companion/heartbeat', state).catch((e) => log('heartbeat failed:', e.message));
+  const beat = (s: Config) => call(s, '/companion/heartbeat', state).catch((e) => log(`heartbeat to ${originOf(s.url)} failed:`, e.message));
+  await Promise.all(sites.map(beat));
   setInterval(async () => {
     state = await report();
-    await call(cfg, '/companion/heartbeat', state).catch((e) => log('heartbeat failed:', e.message));
+    await Promise.all(sites.map(beat));
   }, 60_000);
+
+  // "Sign in with ChatGPT" from a dashboard: the CLI's own browser sign-in, then every site hears of it
+  let signingIn = false;
+  const signIn = async (site: Config) => {
+    if (signingIn) {
+      await call(site, '/companion/sign-in/result', { provider: 'openai', ok: false, message: 'A ChatGPT sign-in is already open on this Mac. Finish it in the browser.' }).catch(() => {});
+      return;
+    }
+    signingIn = true;
+    log('▶ opening the ChatGPT sign-in in your browser');
+    try {
+      const r = await codex.signIn();
+      state = await report();
+      await Promise.all(sites.map(beat));
+      await call(site, '/companion/sign-in/result', { provider: 'openai', ok: r.ok, message: r.message }).catch((e) => log('sign-in result failed:', e.message));
+      log(r.ok ? '✓ signed in to ChatGPT' : `✗ ChatGPT sign-in: ${r.message}`);
+      printStatus(state);
+    } finally {
+      signingIn = false;
+    }
+  };
 
   // image work is capped at 2 in parallel: 3+ Codex image jobs hit 429 (relight experience)
   const slots = { text: 2, image: 2 };
   const busy = { text: 0, image: 0 };
   let idleSince = Date.now();
   for (;;) {
+    // a pairing made while running (another site, or a re-pair) is picked up here
+    const t = existsSync(CONFIG) ? statSync(CONFIG).mtimeMs : 0;
+    if (t !== configTime) {
+      configTime = t;
+      const next = loadSites();
+      for (const s of next.filter((n) => !sites.some((o) => o.token === n.token))) { log(`paired with ${originOf(s.url)}`); void beat(s); }
+      sites = next;
+      if (!sites.length) { log('Unpaired from every site. Stopping.'); process.exit(0); }
+    }
     const providers = (['claude', 'openai'] as const).filter((p) => (p === 'claude' ? state.claude : state.codex).subscriptionBacked);
-    const types: string[] = [];
-    if (busy.text < slots.text && providers.length) types.push('ai.text', 'ai.vision', 'ai.classify');
-    if (busy.image < slots.image && providers.includes('openai')) types.push('ai.image');
     let got = false;
-    if (types.length) {
+    for (const site of sites) {
+      const types: string[] = [];
+      if (busy.text < slots.text && providers.length) types.push('ai.text', 'ai.vision', 'ai.classify');
+      if (busy.image < slots.image && providers.includes('openai')) types.push('ai.image');
+      // always ask, even with no free slot or nothing signed in: a sign-in request arrives this way
       try {
-        const { job } = await call<{ job: WireJob | null }>(cfg, '/companion/jobs/next', { types, providers });
+        const { job, signIn: wants } = await call<{ job: WireJob | null; signIn?: 'openai' }>(site, '/companion/jobs/next', { types, providers });
+        if (wants === 'openai') { got = true; idleSince = Date.now(); void signIn(site); }
         if (job) {
           got = true;
           idleSince = Date.now();
           const lane = job.type === 'ai.image' ? 'image' : 'text';
           busy[lane]++;
-          void runJob(cfg, job).finally(() => { busy[lane]--; });
+          void runJob(site, job).finally(() => { busy[lane]--; });
         }
       } catch (e) {
-        log('poll failed:', (e as Error).message);
-        if (/not paired/i.test((e as Error).message)) process.exit(1);
-        await new Promise((r) => setTimeout(r, 10_000));
+        log(`poll ${originOf(site.url)} failed:`, (e as Error).message);
+        if (/not paired/i.test((e as Error).message)) {
+          log(`${originOf(site.url)} unpaired this Mac; removing it here too.`);
+          saveSites(loadSites().filter((x) => x.token !== site.token));
+        }
       }
     }
     if (!got) {
@@ -201,5 +250,10 @@ async function start() {
 const cmd = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : 'start';
 if (cmd === 'pair') await pair();
 else if (cmd === 'status') printStatus(await report());
-else if (cmd === 'unpair') { if (existsSync(CONFIG)) unlinkSync(CONFIG); console.log('Unpaired on this Mac. Remove it in AI Connections too.'); }
+else if (cmd === 'unpair') {
+  const url = arg('url');
+  if (url) saveSites(loadSites().filter((s) => originOf(s.url) !== originOf(url)));
+  else if (existsSync(CONFIG)) unlinkSync(CONFIG);
+  console.log(`Unpaired ${url ? originOf(url) : 'every site'} on this Mac. Remove it in AI Connections too.`);
+}
 else await start();
