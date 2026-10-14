@@ -110,7 +110,7 @@ function copyPackage(name, from, optional = false) {
     if (!existsSync(join(dir, 'node_modules', dep, 'package.json'))) copyPackage(dep, dir, true);
   }
 }
-for (const name of EXTERNAL) copyPackage(name, join(repo, 'apps/functions'));
+for (const name of EXTERNAL) copyPackage(name, root);
 writeFileSync(join(runFn, 'package.json'), JSON.stringify({ type: 'module' }));
 writeFileSync(join(runFn, '.vc-config.json'), JSON.stringify({
   runtime: 'nodejs22.x',
