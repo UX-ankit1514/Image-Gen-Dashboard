@@ -9,8 +9,8 @@
  * `/api/internal/scan`.
  */
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build as bundle } from 'esbuild';
 import { build as viteBuild } from 'vite';
@@ -82,8 +82,8 @@ for (const f of ['light-grade.png', 'light-tint.png', 'light-grade-wide.png', 'l
   cpSync(join(repo, 'packages/renderer/assets/gradients', f), join(runFn, 'assets/gradients', f));
 }
 
-/** Copies an installed package and, recursively, the dependencies it resolves to (a flat copy of
- *  what Node would load), into the function's node_modules. */
+/** Copies an installed package and, recursively, every dependency Node resolves from it (nested or
+ *  hoisted), each to the same place under the function's node_modules as in this install. */
 function findPackage(name, from) {
   for (let dir = from; ; dir = dirname(dir)) {
     const candidate = join(dir, 'node_modules', name);
@@ -93,22 +93,22 @@ function findPackage(name, from) {
 }
 const copied = new Set();
 function copyPackage(name, from, optional = false) {
-  if (copied.has(name)) return;
   const dir = findPackage(name, from);
   if (!dir) {
     if (optional) return;
     throw new Error(`build-vercel: ${name} is not installed (needed by the job runner)`);
   }
-  copied.add(name);
-  cpSync(dir, join(runFn, 'node_modules', name), { recursive: true, dereference: true });
+  const real = realpathSync(dir);
+  if (copied.has(real)) return;
+  copied.add(real);
+  // the path after the first node_modules: "x" or "x/node_modules/y" for a nested copy
+  const rel = dir.slice(dir.indexOf(`${sep}node_modules${sep}`) + `${sep}node_modules${sep}`.length);
+  const own = join(dir, 'node_modules');
+  cpSync(dir, join(runFn, 'node_modules', rel), { recursive: true, dereference: true, filter: (src) => src !== own && !src.startsWith(own + sep) });
   const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
-  for (const dep of Object.keys(pkg.dependencies ?? {})) {
-    if (!existsSync(join(dir, 'node_modules', dep, 'package.json'))) copyPackage(dep, dir);
-  }
+  for (const dep of Object.keys(pkg.dependencies ?? {})) copyPackage(dep, dir);
   // platform builds (sharp's libvips for linux-x64 …) are optional dependencies; only the installed ones exist
-  for (const dep of Object.keys(pkg.optionalDependencies ?? {})) {
-    if (!existsSync(join(dir, 'node_modules', dep, 'package.json'))) copyPackage(dep, dir, true);
-  }
+  for (const dep of Object.keys(pkg.optionalDependencies ?? {})) copyPackage(dep, dir, true);
 }
 for (const name of EXTERNAL) copyPackage(name, root);
 writeFileSync(join(runFn, 'package.json'), JSON.stringify({ type: 'module' }));
