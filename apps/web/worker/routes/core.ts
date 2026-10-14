@@ -19,6 +19,7 @@ import {
 } from '@acs/types';
 import { clients, ctxFor } from '../env';
 import { body, type C, type HonoEnv } from '../http';
+import { kickRunner, needsKick, scanNeedsKick } from '../runner';
 import { assetUrls, cardUrls, designAssetIds, exportUrls, projectUrls, versionUrls } from '../urls';
 
 export const core = new Hono<HonoEnv>();
@@ -135,6 +136,7 @@ core.post('/projects/:pid/cards/:cid/attach', async (c) => {
 core.get('/scans/:sid', async (c) => {
   const ctx = ctxFor(c.env);
   const scan = await getScan(ctx, c.req.param('sid'));
+  if (scanNeedsKick(scan)) kickRunner(c);
   const pages = scan.status === 'done' || scan.pages ? await listPages(ctx, scan.projectId, scan.id) : [];
   const assetIds = [...new Set(pages.flatMap((p) => p.images.map((i) => i.assetId).filter(Boolean)))] as string[];
   const assets = (await ctx.db.getMany<Asset>(assetIds.map((a) => P.asset(a)))).filter(Boolean) as Asset[];
@@ -335,7 +337,10 @@ core.patch('/assets/:aid', async (c) => {
 core.get('/projects/:pid/jobs', async (c) => {
   const ctx = ctxFor(c.env);
   const jobs = await activeJobs(ctx.db, c.req.param('pid'));
-  const batches = await ctx.db.query<Batch>(P.batches, { where: [['projectId', '==', c.req.param('pid')]], orderBy: [['createdAt', 'desc']], limit: 20 });
+  // what the strips show: the last day of runs (each document read counts against the free quota)
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  const batches = await ctx.db.query<Batch>(P.batches, { where: [['projectId', '==', c.req.param('pid')], ['createdAt', '>=', since]], orderBy: [['createdAt', 'desc']], limit: 20 });
+  if (jobs.some(needsKick)) kickRunner(c);
   return c.json({ jobs: jobs.map(({ input: _i, ...rest }) => rest), batches });
 });
 
@@ -362,6 +367,7 @@ core.get('/exports/:eid', async (c) => {
   const ctx = ctxFor(c.env);
   const e = await ctx.db.get<ExportRecord>(P.export(c.req.param('eid')));
   if (!e) throw notFound('export');
+  if (e.status === 'queued' && Date.now() - Date.parse(e.createdAt) > 8_000) kickRunner(c);
   const p = await ctx.db.get<Project>(P.project(e.projectId));
   return c.json(await exportUrls(clients(c.env).storage, e, p?.name));
 });

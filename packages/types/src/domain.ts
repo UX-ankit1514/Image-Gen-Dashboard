@@ -347,6 +347,8 @@ export interface Scan {
   /** Records fetched from inside the page for services listings (legacy services.mjs). */
   browserRecords?: unknown[] | null;
   browserFor?: { url: string; serviceType: string; total: number } | null;
+  /** When a job runner took the browser step (Vercel), so a second runner leaves it alone. */
+  browserClaimedAt?: Iso | null;
   error: string | null;
   rescanOf: string | null;
   createdAt: Iso;

@@ -1,0 +1,5 @@
+# The scanner on Vercel (vercel_scan.py): Firestore over the service account, Pillow for image checks,
+# and Vercel's Python runtime. Installed as Linux wheels into the function by apps/web/scripts/build-vercel.mjs.
+vercel-runtime==0.23.2
+google-cloud-firestore==2.34.1
+pillow==12.3.0

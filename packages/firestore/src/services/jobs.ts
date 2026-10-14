@@ -145,9 +145,11 @@ export async function cancelBatch(ctx: Ctx, batchId: string) {
   return { cancelled: open.length };
 }
 
+/** A project's jobs from the last day: everything the progress strips and review screens show. The
+ *  bound keeps an idle project page to a read or two per poll instead of hundreds of old jobs. */
 export async function activeJobs(db: Db, projectId: string) {
-  const all = await db.query<Job>(P.jobs, { where: [['projectId', '==', projectId]], orderBy: [['createdAt', 'desc']], limit: 300 });
-  return all;
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  return db.query<Job>(P.jobs, { where: [['projectId', '==', projectId], ['createdAt', '>=', since]], orderBy: [['createdAt', 'desc']], limit: 300 });
 }
 
 /** The companion asks for work; claimed in a transaction so two devices never run one job. */

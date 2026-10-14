@@ -69,3 +69,22 @@ export function safeEqual(a: string, b: string) {
   for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return r === 0;
 }
+
+/**
+ * The header value one deployment's functions use to call each other (the API kicks the job
+ * runner, the runner and the Python scanner kick each other): HMAC-SHA256 of a fixed label with
+ * TOKEN_KEY, hex. python/vercel_scan.py computes the same value.
+ */
+export async function runnerToken(tokenKey: string) {
+  const key = await crypto.subtle.importKey('raw', enc.encode(tokenKey), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode('acs-runner-v1')));
+  return [...sig].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+
+/** Constant-time comparison of two strings (equal length required). */
+export function sameSecret(a: string | null | undefined, b: string) {
+  if (typeof a !== 'string' || a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}

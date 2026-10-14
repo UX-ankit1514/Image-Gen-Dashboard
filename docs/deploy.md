@@ -39,14 +39,26 @@ Everything below is outward-facing and needs your accounts. Steps marked **you**
    ```
 6. Deploy: `npm run deploy:web` → prints `https://arnifi-creative-studio.<you>.workers.dev`.
 
-## 2b. Vercel instead of Cloudflare (app + API)
+## 2b. Vercel instead of Cloudflare (app, API and processing)
 
-The same app and API also run on Vercel; storage stays any S3-compatible bucket (R2 works) and the jobs
-stay on Firebase (section 1).
+On Vercel, Firebase is only the database: no Firebase Functions and no Blaze plan. Files go to any
+S3-compatible bucket (Backblaze B2, R2 …). From section 1 you only need the project, Firestore and the
+service account, plus the rules and indexes (they deploy on the free Spark plan):
+`firebase deploy --only firestore:rules,firestore:indexes --project <project-id>`.
 
 * Project settings: **Root Directory `apps/web`**. `apps/web/vercel.json` sets the build
   (`npm run build:vercel`), which writes `.vercel/output`: the SPA as static files, the API as one Node.js
   function at `/api` (region `bom1`, next to Firestore in asia-south1), everything else → `index.html`.
+* Processing runs in two more functions in the same deployment. `/api/internal/run`
+  (`apps/functions/src/vercel.ts`, Node.js, headless Chrome) runs the image, render and export jobs and
+  the browser step of a scan; `/api/internal/scan` (`python/vercel_scan.py`, Python 3.12) runs the
+  scanner. There are no triggers: the API calls the runner after each change, and the job, scan and
+  export polls call it again when work has waited more than 8 s, so a lost call costs seconds. Only one
+  runner works at a time (`runner/lease` in Firestore). The functions call each other with a header
+  derived from `TOKEN_KEY`.
+* Limits (Hobby plan): a job gets at most 300 s, so an export of more than about 60 cards may stop and is
+  retried, then marked failed; each poll of the project page reads the last day of jobs only, to stay
+  inside Firestore's free 50,000 reads a day.
 * Settings → Environment Variables (Production):
   `FIRESTORE_PROJECT_ID`, `GOOGLE_SA_EMAIL`, `GOOGLE_SA_KEY` (the private key, `\n` escapes are fine),
   `STORAGE_ENDPOINT`, `STORAGE_BUCKET`, `STORAGE_REGION` (`auto` for R2), `STORAGE_ACCESS_KEY_ID`,
