@@ -44,14 +44,14 @@ export class OpenAICodexLocal implements AIProvider {
 
   /**
    * "Sign in with ChatGPT" from the dashboard: the CLI's own browser sign-in (`codex login`, never
-   * `--with-api-key`). It opens ChatGPT's sign-in page in the default browser on this Mac and waits
+   * `--with-api-key`). It opens ChatGPT's sign-in page in the default browser on this computer and waits
    * for it on a local port; the tokens stay in the CLI's own store.
    */
   async signIn(): Promise<{ ok: boolean; message: string | null }> {
     const r = await run(this.bin, ['login'], { timeoutMs: 5 * 60_000 });
     const after = await this.detect();
     if (after.subscriptionBacked) return { ok: true, message: null };
-    if (!after.installed) return { ok: false, message: 'The Codex CLI is not installed on this Mac. Install it with: npm i -g @openai/codex' };
+    if (!after.installed) return { ok: false, message: 'The ChatGPT tool (the Codex CLI) is not installed on this computer. Install it with: npm i -g @openai/codex' };
     if (r.timedOut) return { ok: false, message: 'The ChatGPT sign-in was not finished within 5 minutes. Try again.' };
     if (after.loggedIn) return { ok: false, message: 'Codex is signed in with an API key. Sign in with your ChatGPT account instead.' };
     return { ok: false, message: 'The ChatGPT sign-in did not finish. Try again.' };

@@ -27,12 +27,24 @@ open http://localhost:5173
 
 ### Connect your AI subscriptions (optional)
 
-AI Connections → **Pair a companion** shows a 6-digit code, then on the same Mac:
+AI Connections → **Sign in with ChatGPT** (or **Connect this computer**) shows a connect code. Then, on a Mac or
+a Windows PC with this project folder and Node.js:
+
+1. Copy the connect code.
+2. Double-click `Creative Studio Helper.command` (Mac) or `Creative Studio Helper.bat` (Windows).
+3. Paste the code when it asks and press Enter. Leave the window open.
+
+The helper pairs, keeps running, and the website then opens ChatGPT's own sign-in in your browser. Next
+time, double-click the same file and just press Enter. Prefer a terminal?
 
 ```bash
-npm run companion -- pair --url http://localhost:5173 --code 123456
-npm run companion        # keep it running
+npm run companion -- connect "http://localhost:5173/#123456"   # pair with the code from the website, then run
+npm run companion                                              # run (already paired)
 ```
+
+Only one helper runs per computer; a second one says so and leaves. Windows support (finding `claude`
+and `codex`, npm `.cmd` shims, stopping a cancelled job) is covered by unit tests but has not been run on
+a real Windows PC yet.
 
 The companion runs the official `claude` (Claude Code, signed in with Claude Pro/Max) and `codex`
 (signed in with ChatGPT) CLIs. It refuses API-key sign-ins and strips API keys from the environment, so a

@@ -2,28 +2,33 @@
 /**
  * Arnifi Local Companion (PRD §61).
  *
+ *   npm run companion -- connect # ask for the connect code the website shows, pair, then keep running
  *   npm run companion -- pair --url https://studio.example.com --code 123456 [--name "Ankit's Mac"]
  *   npm run companion            # run: heartbeat + take AI tasks
  *   npm run companion -- status  # what is installed and how it is signed in
  *   npm run companion -- unpair [--url https://studio.example.com]
  *
  * One companion can serve several Creative Studio sites (say localhost and the live site): each
- * `pair` adds a site, and a running companion picks a new pairing up within seconds.
+ * `pair` adds a site, and a running companion picks a new pairing up within seconds. Only one
+ * companion runs per computer; a second one says so and leaves. Works on macOS and Windows.
  * It detects Claude Code and the Codex CLI, confirms they are signed in with subscriptions, receives
  * approved tasks from the dashboard, runs them locally and returns structured results. It stores only
  * the dashboard URL and its device token (mode 600). It never reads or sends passwords, cookies or
  * provider tokens, and it never calls a provider's backend directly — only the official CLIs.
  */
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 import { homedir, hostname, platform, tmpdir } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import { ProviderError, type AIProvider, type AiTask } from '@acs/providers';
 import { ClaudeCodeLocal } from './providers/claude';
 import { OpenAICodexLocal } from './providers/codex';
+import { parseConnectCode } from './connect';
 
 const VERSION = '0.1.0';
 const DIR = join(homedir(), '.arnifi-companion');
 const CONFIG = join(DIR, 'config.json');
+const LOCK = join(DIR, 'running.pid');
 
 interface Config { url: string; token: string; deviceId: string; name: string }
 
@@ -74,29 +79,109 @@ async function report() {
   return { version: VERSION, claude: c, codex: { ...x, imageVerified: codex.imageVerified } };
 }
 
+/** Pairs this computer with a site. Returns a plain-language problem, or null when it worked. */
+async function pairWith(url: string, code: string, name: string, show: boolean): Promise<string | null> {
+  let res: Response;
+  try {
+    res = await fetch(`${url.replace(/\/$/, '')}/api/companion/pair`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code, name, platform: `${platform()} companion ${VERSION}` }),
+    });
+  } catch {
+    return `Could not reach ${originOf(url)}. Check your internet connection and try again.`;
+  }
+  const data = await res.json().catch(() => ({})) as { deviceId?: string; token?: string; error?: string };
+  if (!res.ok || !data.token) return `Pairing failed: ${(data.error ?? `error ${res.status}`).replace(/[.\s]+$/, '')}. (A code works once and lasts 10 minutes.)`;
+  // a new pairing with the same site replaces the old one; other sites stay paired
+  saveSites([...loadSites().filter((s) => originOf(s.url) !== originOf(url)), { url, token: data.token, deviceId: data.deviceId ?? '', name }]);
+  console.log(`Connected to ${originOf(url)} as "${name}".`);
+  if (show) {
+    const r = await report();
+    await call({ url, token: data.token }, '/companion/heartbeat', r);
+    printStatus(r);
+  }
+  return null;
+}
+
+const deviceName = () => arg('name') ?? hostname().replace(/\.local$/, '');
+
 async function pair() {
   const url = arg('url');
   const code = arg('code');
   if (!url || !code) {
-    console.error('Usage: npm run companion -- pair --url <dashboard url> --code <6-digit code>');
+    console.error('Usage: npm run companion -- pair --url <website address> --code <6-digit code>\n   or: npm run companion -- connect');
     process.exit(2);
   }
-  const name = arg('name') ?? hostname().replace(/\.local$/, '');
-  const res = await fetch(`${url.replace(/\/$/, '')}/api/companion/pair`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ code, name, platform: `${platform()} companion ${VERSION}` }),
-  });
-  const data = await res.json() as { deviceId?: string; token?: string; error?: string };
-  if (!res.ok || !data.token) {
-    console.error(`Pairing failed: ${data.error ?? res.status}`);
-    process.exit(1);
+  const problem = await pairWith(url, code, deviceName(), true);
+  if (problem) { console.error(problem); process.exit(1); }
+  console.log('If the companion is running it picks this up in a few seconds; otherwise start it with: npm run companion');
+}
+
+/** Reads lines from the terminal one question at a time; null once nothing more can be read. One reader for the whole session, so lines pasted together are not lost. */
+function lineReader() {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const queue: string[] = [];
+  let waiting: ((line: string | null) => void) | null = null;
+  let closed = false;
+  rl.on('line', (l) => { if (waiting) { const w = waiting; waiting = null; w(l); } else queue.push(l); });
+  rl.on('close', () => { closed = true; if (waiting) { const w = waiting; waiting = null; w(null); } });
+  return {
+    ask: (question: string) => new Promise<string | null>((resolve) => {
+      process.stdout.write(question);
+      if (queue.length) resolve(queue.shift()!);
+      else if (closed) resolve(null);
+      else waiting = resolve;
+    }),
+    close: () => rl.close(),
+  };
+}
+
+/**
+ * What the double-click launchers run: ask for the connect code the website shows (or just carry on
+ * when this computer is already connected), pair, and keep running. One step for the person.
+ */
+async function connect() {
+  console.log('\n  Creative Studio helper\n  ----------------------');
+  const known = loadSites();
+  const reader = lineReader();
+  let given = process.argv.slice(3).filter((a) => !a.startsWith('--')).join(' ');
+  for (;;) {
+    const text = given || await reader.ask(known.length
+      ? '\n  Paste the connect code from the website and press Enter.\n  (Already connected? Just press Enter to start the helper.)\n  > '
+      : '\n  Paste the connect code from the website and press Enter.\n  > ');
+    given = '';
+    if (text === null) { console.error('\n  No keyboard input is available here.'); process.exit(2); }
+    if (!text.trim()) {
+      if (known.length) break;
+      console.log('  Nothing pasted yet. On the website, press Copy next to the connect code.');
+      continue;
+    }
+    const parsed = parseConnectCode(text);
+    if ('error' in parsed) { console.log(`  ${parsed.error}`); continue; }
+    const problem = await pairWith(parsed.url, parsed.code, deviceName(), false);
+    if (!problem) break;
+    console.log(`  ${problem}`);
   }
-  // a new pairing with the same site replaces the old one; other sites stay paired
-  saveSites([...loadSites().filter((s) => originOf(s.url) !== originOf(url)), { url, token: data.token, deviceId: data.deviceId ?? '', name }]);
-  console.log(`Paired with ${originOf(url)} as "${name}". If the companion is running it picks this up in a few seconds; otherwise start it with: npm run companion`);
-  const r = await report();
-  await call({ url, token: data.token }, '/companion/heartbeat', r);
-  printStatus(r);
+  reader.close();
+  await start();
+}
+
+/** Only one helper runs per computer. A lock file, touched while running, tells a second one to leave. */
+function takeLock(): boolean {
+  try {
+    const pid = Number(readFileSync(LOCK, 'utf8'));
+    const fresh = Date.now() - statSync(LOCK).mtimeMs < 90_000;
+    if (pid && pid !== process.pid && fresh) {
+      try { process.kill(pid, 0); return false; } catch (e) { if ((e as NodeJS.ErrnoException).code === 'EPERM') return false; }
+    }
+  } catch { /* no lock yet */ }
+  mkdirSync(DIR, { recursive: true, mode: 0o700 });
+  writeFileSync(LOCK, String(process.pid));
+  setInterval(() => { try { utimesSync(LOCK, new Date(), new Date()); } catch { /* next time */ } }, 20_000).unref();
+  const drop = () => { try { if (readFileSync(LOCK, 'utf8') === String(process.pid)) unlinkSync(LOCK); } catch { /* gone */ } };
+  process.on('exit', drop);
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(sig, () => process.exit(0));
+  return true;
 }
 
 function printStatus(r: Awaited<ReturnType<typeof report>>) {
@@ -166,8 +251,12 @@ async function runJob(cfg: Config, job: WireJob) {
 async function start() {
   let sites = loadSites();
   if (!sites.length) {
-    console.error('Not paired. In the dashboard open AI Connections → Connect ChatGPT (or Pair a companion), then run the pair command it shows.');
+    console.error('Not connected to any website yet. On the website open AI Connections → Sign in with ChatGPT, then double-click "Creative Studio Helper" and paste the connect code.\nOr run: npm run companion -- connect');
     process.exit(2);
+  }
+  if (!takeLock()) {
+    console.log('The helper is already running on this computer. It picks up a new connection within a few seconds, so you can close this window.');
+    process.exit(0);
   }
   let configTime = existsSync(CONFIG) ? statSync(CONFIG).mtimeMs : 0;
   log(`Arnifi Local Companion ${VERSION} as "${sites[0].name}" → ${sites.map((x) => originOf(x.url)).join(', ')}`);
@@ -184,7 +273,7 @@ async function start() {
   let signingIn = false;
   const signIn = async (site: Config) => {
     if (signingIn) {
-      await call(site, '/companion/sign-in/result', { provider: 'openai', ok: false, message: 'A ChatGPT sign-in is already open on this Mac. Finish it in the browser.' }).catch(() => {});
+      await call(site, '/companion/sign-in/result', { provider: 'openai', ok: false, message: 'A ChatGPT sign-in is already open on this computer. Finish it in the browser.' }).catch(() => {});
       return;
     }
     signingIn = true;
@@ -235,7 +324,7 @@ async function start() {
       } catch (e) {
         log(`poll ${originOf(site.url)} failed:`, (e as Error).message);
         if (/not paired/i.test((e as Error).message)) {
-          log(`${originOf(site.url)} unpaired this Mac; removing it here too.`);
+          log(`${originOf(site.url)} unpaired this computer; removing it here too.`);
           saveSites(loadSites().filter((x) => x.token !== site.token));
         }
       }
@@ -249,11 +338,12 @@ async function start() {
 
 const cmd = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : 'start';
 if (cmd === 'pair') await pair();
+else if (cmd === 'connect') await connect();
 else if (cmd === 'status') printStatus(await report());
 else if (cmd === 'unpair') {
   const url = arg('url');
   if (url) saveSites(loadSites().filter((s) => originOf(s.url) !== originOf(url)));
   else if (existsSync(CONFIG)) unlinkSync(CONFIG);
-  console.log(`Unpaired ${url ? originOf(url) : 'every site'} on this Mac. Remove it in AI Connections too.`);
+  console.log(`Unpaired ${url ? originOf(url) : 'every site'} on this computer. Remove it in AI Connections too.`);
 }
 else await start();

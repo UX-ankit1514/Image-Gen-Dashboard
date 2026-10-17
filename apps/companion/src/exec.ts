@@ -2,10 +2,8 @@
  * Running the official CLIs safely. The environment is scrubbed of API keys before every spawn, so a
  * CLI can never fall back to paid API usage (PRD Rule 10, §62).
  */
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { findBin as findBinOn, launchFor } from './resolve';
 
 const STRIP = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'AZURE_OPENAI_API_KEY'];
 
@@ -15,21 +13,25 @@ export function cleanEnv() {
   return env;
 }
 
-export function findBin(name: string) {
-  const candidates = [join(homedir(), '.local/bin', name), `/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`, join(homedir(), '.npm-global/bin', name)];
-  return candidates.find((p) => existsSync(p)) ?? name;
+export const findBin = (name: string) => findBinOn(name);
+
+/** Stops a CLI and what it started: Windows needs the whole tree ended, elsewhere SIGTERM is enough. */
+function stop(child: ChildProcess) {
+  if (process.platform === 'win32' && child.pid) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }).on('error', () => child.kill());
+  else child.kill('SIGTERM');
 }
 
 export interface RunResult { code: number; stdout: string; stderr: string; timedOut: boolean }
 
 export function run(bin: string, args: string[], opts: { input?: string; cwd?: string; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<RunResult> {
   return new Promise((resolve) => {
-    const child = spawn(bin, args, { cwd: opts.cwd, env: cleanEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+    const launch = launchFor(bin, args);
+    const child = spawn(launch.command, launch.args, { cwd: opts.cwd, env: cleanEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); }, opts.timeoutMs ?? 300_000);
-    opts.signal?.addEventListener('abort', () => child.kill('SIGTERM'));
+    const timer = setTimeout(() => { timedOut = true; stop(child); }, opts.timeoutMs ?? 300_000);
+    opts.signal?.addEventListener('abort', () => stop(child));
     child.stdout.on('data', (c) => (stdout += c));
     child.stderr.on('data', (c) => (stderr += c));
     child.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, stdout, stderr: stderr + e.message, timedOut }); });

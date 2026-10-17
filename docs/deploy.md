@@ -78,9 +78,7 @@ service account, plus the rules and indexes (they deploy on the free Spark plan)
 ## 4. Companion against production
 
 ```bash
-npm run companion -- unpair      # if paired to localhost
-npm run companion -- pair --url https://arnifi-creative-studio.<you>.workers.dev --code <code from AI Connections>
-npm run companion
+npm run companion -- connect "https://arnifi-creative-studio.<you>.workers.dev/#<code from AI Connections>"   # or double-click Creative Studio Helper
 ```
 
 ## 5. Smoke test

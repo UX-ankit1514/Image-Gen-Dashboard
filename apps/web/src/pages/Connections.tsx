@@ -1,28 +1,30 @@
 /**
  * AI Connections (PRD §58–62). Bring your own subscription: ChatGPT and Claude connect through the
- * official CLIs on a paired Local Companion. No API keys, no passwords, no cookies — and never a
- * silent switch to paid API usage. "Sign in with ChatGPT" asks the companion to open ChatGPT's own
- * sign-in page on the Mac (the Codex CLI's login); the sign-in never passes through Creative Studio.
+ * official CLIs on a paired Local Companion (called the "helper app" on screen). No API keys, no
+ * passwords, no cookies — and never a silent switch to paid API usage. "Sign in with ChatGPT" asks
+ * the helper to open ChatGPT's own sign-in page in the browser (the Codex CLI's login, on Mac and
+ * Windows); the sign-in never passes through Creative Studio. Setting the helper up is one screen:
+ * copy a connect code, double-click one file, paste.
  */
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { AlertTriangle, Check, CircleCheck, Copy, Laptop, Link2, Loader2, LogIn, Minus, Plug, ShieldCheck, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronRight, CircleCheck, Copy, FileCode2, Laptop, Link2, Loader2, LogIn, Minus, Plug, ShieldCheck, X } from 'lucide-react';
 import type { ProviderConnection } from '@acs/types';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { PageHeader } from '../shell/AppShell';
-import { Badge, Button, cx, Dialog, Spinner } from '../ui';
+import { Badge, Button, cx, Dialog, Segmented, Spinner } from '../ui';
 import { useConnections, type ConnectionsView } from '../editor/ai/useAi';
 
 const NAME = { openai: 'ChatGPT', claude: 'Claude' } as const;
 const MANAGE = { openai: 'https://chatgpt.com/#settings/Subscription', claude: 'https://claude.ai/settings/usage' } as const;
 
 function statusOf(c: ProviderConnection) {
-  if (c.status === 'connected') return { dot: 'bg-ok', text: c.mode === 'local-companion' ? (c.provider === 'claude' ? 'Connected locally' : 'Connected via companion') : 'Connected' };
+  if (c.status === 'connected') return { dot: 'bg-ok', text: c.mode === 'local-companion' ? (c.provider === 'claude' ? 'Connected locally' : 'Connected via helper app') : 'Connected' };
   if (c.status === 'limited') return { dot: 'bg-warn', text: c.usageLimit?.reached ? 'Usage limit reached' : 'Needs attention' };
-  if (c.status === 'unavailable') return { dot: 'bg-[#bdbdbd]', text: 'Companion offline' };
+  if (c.status === 'unavailable') return { dot: 'bg-[#bdbdbd]', text: 'Helper app offline' };
   return { dot: 'bg-[#d4d4d4]', text: 'Not connected' };
 }
 
@@ -39,15 +41,14 @@ function Cap({ label, value }: { label: string; value: 'yes' | 'no' | 'depends' 
 
 export function ConnectionsPage() {
   const [connecting, setConnecting] = useState(false);
-  const [pairing, setPairing] = useState<{ code: string; expiresAt: string } | null>(null);
-  const { data, isLoading } = useConnections(connecting || !!pairing);
+  const [pairing, setPairing] = useState(false);
+  const { data, isLoading } = useConnections(connecting || pairing);
   const [params, setParams] = useSearchParams();
   const qc = useQueryClient();
   const [welcome, setWelcome] = useState<'openai' | 'claude' | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ['connections'] });
-  const code = useMutation({ mutationFn: () => api.post<{ code: string; expiresAt: string }>('/connections/pairing-code'), onSuccess: setPairing, onError: (e) => toast.error(e.message) });
   const toggle = useMutation({ mutationFn: ({ id, on }: { id: string; on: boolean }) => api.post(`/connections/${id}/${on ? 'enable' : 'disable'}`), onSuccess: refresh, onError: (e) => toast.error(e.message) });
-  const revoke = useMutation({ mutationFn: (id: string) => api.post(`/companion/devices/${id}/revoke`), onSuccess: () => { refresh(); toast.success('Companion unpaired'); } });
+  const revoke = useMutation({ mutationFn: (id: string) => api.post(`/companion/devices/${id}/revoke`), onSuccess: () => { refresh(); toast.success('Computer disconnected'); } });
 
   // PRD §59: say plainly whose allowance is used, once, after connecting
   useEffect(() => {
@@ -63,7 +64,6 @@ export function ConnectionsPage() {
 
 
   if (isLoading || !data) return <Spinner className="mx-auto mt-24" />;
-  const origin = window.location.origin;
 
   return (
     <div className="mx-auto max-w-[1080px] pb-16">
@@ -100,9 +100,9 @@ export function ConnectionsPage() {
                 {c.provider === 'openai' && data.oauth.openai ? <a href="/api/connections/openai/oauth/start"><Button size="sm" variant="primary">Continue with ChatGPT</Button></a> : null}
               </div>
               {c.provider === 'openai' ? (
-                <p className="mt-3 text-[12px] leading-relaxed text-muted">Signing in opens ChatGPT’s own sign-in page on your Mac, through the companion and the official Codex CLI. Your password and tokens stay with ChatGPT and the CLI; generation then uses your ChatGPT plan.</p>
+                <p className="mt-3 text-[12px] leading-relaxed text-muted">Opens ChatGPT’s own sign-in in your browser. Sign in the way you normally do. Your password never reaches Creative Studio, and generation uses your ChatGPT plan.</p>
               ) : null}
-              {c.provider === 'claude' ? <p className="mt-3 text-[12px] leading-relaxed text-muted">Claude runs through Claude Code on your Mac, signed in with your Claude subscription. It reads and writes; it does not generate images.</p> : null}
+              {c.provider === 'claude' ? <p className="mt-3 text-[12px] leading-relaxed text-muted">Claude runs through Claude Code on your computer, signed in with your Claude subscription. It reads and writes; it does not generate images.</p> : null}
             </div>
           );
         })}
@@ -111,10 +111,10 @@ export function ConnectionsPage() {
       <section className="mx-8 mt-6 rounded-xl border border-line bg-panel p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-[15px] font-semibold"><Laptop className="size-4" />Local Companion</div>
-            <p className="mt-1 max-w-2xl text-[13px] text-muted">A small helper on your Mac that runs the official Claude Code and Codex CLIs with your own sign-in, and sends back only the results. Pair it once with a 6-digit code.</p>
+            <div className="flex items-center gap-2 text-[15px] font-semibold"><Laptop className="size-4" />Helper app</div>
+            <p className="mt-1 max-w-2xl text-[13px] text-muted">A small app on your Mac or Windows PC that uses your own ChatGPT and Claude sign-ins and sends back only the results. Set it up once.</p>
           </div>
-          <Button variant="primary" icon={<Plug className="size-3.5" />} loading={code.isPending} onClick={() => code.mutate()}>Pair a companion</Button>
+          <Button variant="primary" icon={<Plug className="size-3.5" />} onClick={() => setPairing(true)}>Connect this computer</Button>
         </div>
         <div className="mt-4 divide-y divide-line">
           {data.companion.devices.length ? data.companion.devices.map((d) => {
@@ -124,33 +124,19 @@ export function ConnectionsPage() {
                 <span className={cx('size-2 rounded-full', online ? 'bg-ok' : 'bg-[#cfcfcf]')} />
                 <span className="font-medium">{d.name}</span><span className="text-muted">{(d as { platform?: string }).platform}</span>
                 <span className="text-faint">{online ? 'online' : d.lastSeenAt ? `last seen ${ago(d.lastSeenAt)}` : 'never seen'}</span>
-                <Button size="sm" variant="ghost" className="ml-auto" onClick={() => revoke.mutate(d.id)}>Unpair</Button>
+                <Button size="sm" variant="ghost" className="ml-auto" onClick={() => revoke.mutate(d.id)}>Disconnect</Button>
               </div>
             );
-          }) : <div className="py-3 text-[13px] text-muted">No companion paired yet.</div>}
+          }) : <div className="py-3 text-[13px] text-muted">No computer connected yet.</div>}
         </div>
         <div className="mt-4 flex items-start gap-2 rounded-lg bg-hover px-3 py-2.5 text-[12px] text-muted">
           <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
-          <span>The companion refuses API-key sign-ins and strips API keys from the environment before running a CLI, so your subscriptions are never swapped for paid API usage. Passwords, cookies and tokens never leave your Mac.</span>
+          <span>The helper refuses API-key sign-ins and removes API keys before running anything, so your subscriptions are never swapped for paid API usage. Passwords, cookies and tokens never leave your computer.</span>
         </div>
       </section>
 
-      {connecting ? <ConnectChatGpt view={data} origin={origin} onClose={() => setConnecting(false)} /> : null}
-
-      <Dialog open={!!pairing} onOpenChange={(v) => !v && setPairing(null)} title="Pair the Local Companion" width={560}
-        footer={<Button variant="primary" onClick={() => setPairing(null)}>Done</Button>}>
-        {pairing ? (
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-center gap-2 rounded-xl bg-hover py-5 font-mono text-[34px] font-semibold tracking-[0.3em] tabular-nums" data-testid="pairing-code">{pairing.code}</div>
-            <div className="text-center text-[12px] text-muted">Valid for 10 minutes · single use</div>
-            <div>
-              <div className="mb-1.5 text-[12.5px] font-medium">On your Mac, in the Creative Studio folder, run:</div>
-              <CopyLine text={`npm run companion -- pair --url ${origin} --code ${pairing.code}`} />
-              <div className="mt-2 text-[12px] text-muted">Then keep it running with <code className="rounded bg-hover px-1">npm run companion</code>. This page updates when it checks in.</div>
-            </div>
-          </div>
-        ) : null}
-      </Dialog>
+      {connecting ? <ConnectChatGpt view={data} onClose={() => setConnecting(false)} /> : null}
+      {pairing ? <ConnectComputer view={data} onClose={() => setPairing(false)} /> : null}
 
       <Dialog open={!!welcome} onOpenChange={() => setWelcome(null)} title={welcome === 'openai' ? "You're using your ChatGPT plan." : "You're using your Claude plan."}
         footer={<Button variant="primary" onClick={() => setWelcome(null)}>Got it</Button>}>
@@ -160,8 +146,14 @@ export function ConnectionsPage() {
   );
 }
 
-/** One step of the ChatGPT connection, numbered, with a tick once it is done. */
-function Step({ n, title, done, children }: { n: number; title: string; done: boolean; children?: ReactNode }) {
+
+// ---------------------------------------------------------------- setting up the helper app
+type Os = 'mac' | 'windows';
+const guessOs = (): Os => (typeof navigator !== 'undefined' && /Win/i.test(navigator.userAgent) ? 'windows' : 'mac');
+const LAUNCHER = { mac: 'Creative Studio Helper.command', windows: 'Creative Studio Helper.bat' } as const;
+
+/** One step: a numbered dot, a plain sentence, an optional detail under it. */
+function Step({ n, title, done, children }: { n: number; title: ReactNode; done?: boolean; children?: ReactNode }) {
   return (
     <div className="flex gap-3">
       <span className={cx('mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold', done ? 'bg-ok text-white' : 'bg-hover text-ink')}>
@@ -175,12 +167,115 @@ function Step({ n, title, done, children }: { n: number; title: string; done: bo
   );
 }
 
+/** The one-line connect code (site + a code that works once for ten minutes), made when it is needed. */
+function useConnectCode(enabled: boolean) {
+  const gen = useMutation({ mutationFn: () => api.post<{ code: string; expiresAt: string }>('/connections/pairing-code'), onError: (e) => toast.error(e.message) });
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { if (enabled) gen.mutate(); }, [enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(t); }, []);
+  return {
+    line: gen.data ? `${window.location.origin}/#${gen.data.code}` : null,
+    expired: !!gen.data && Date.parse(gen.data.expiresAt) <= now,
+    loading: gen.isPending,
+    renew: () => gen.mutate(),
+  };
+}
+
+/** Puts text on the clipboard and says whether it worked, so "Copied" is never a guess. */
+async function copyText(text: string) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch { toast.error('Couldn’t copy. Select the text and copy it yourself.'); return false; }
+}
+
+/** Copy button that says so: the one thing a person has to do on this page. */
+function CopyCode({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-line-strong bg-panel p-1.5 pl-3">
+      <code className="min-w-0 flex-1 break-all text-[12.5px] leading-snug text-ink" data-testid="connect-code">{text}</code>
+      <Button size="sm" variant="primary" icon={copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />} data-testid="copy-connect-code"
+        onClick={async () => { if (await copyText(text)) { setCopied(true); setTimeout(() => setCopied(false), 2500); } }}>
+        {copied ? 'Copied' : 'Copy'}
+      </Button>
+    </div>
+  );
+}
+
 /**
- * "Sign in with ChatGPT": 1. the companion runs on this Mac (paired with this site), 2. it opens
- * ChatGPT's sign-in in the browser and reports back. When the companion is already running, the
- * click goes straight to the sign-in.
+ * Getting the helper app running on this computer, in three plain steps. Already connected before
+ * (needsCode = false) it is one: open the same file again.
  */
-function ConnectChatGpt({ view, origin, onClose }: { view: ConnectionsView; origin: string; onClose: () => void }) {
+function HelperSetup({ needsCode, code, waiting }: { needsCode: boolean; code: ReturnType<typeof useConnectCode>; waiting: boolean }) {
+  const [os, setOs] = useState<Os>(guessOs);
+  const [typing, setTyping] = useState(false);
+  const file = <span className="inline-flex items-center gap-1 rounded bg-hover px-1.5 py-0.5 align-baseline text-[12.5px] font-medium text-ink"><FileCode2 className="size-3.5" />{LAUNCHER[os]}</span>;
+  const hint = os === 'mac'
+    ? 'If your Mac says it can’t open it, right-click the file, choose Open, then Open again.'
+    : 'If Windows says it protected your PC, choose More info, then Run anyway.';
+  return (
+    <div className="flex flex-col gap-4" data-testid="helper-setup">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[13px] text-muted">{needsCode ? 'One-time setup, about a minute.' : 'The helper app isn’t running right now.'}</span>
+        <Segmented size="sm" value={os} onChange={setOs} options={[{ value: 'mac', label: 'Mac' }, { value: 'windows', label: 'Windows' }]} />
+      </div>
+
+      {needsCode ? (
+        <Step n={1} title="Copy your connect code">
+          {code.expired ? (
+            <div className="flex items-center gap-2 rounded-lg bg-warn-bg px-3 py-2 text-[12.5px] text-[#7a4f10]">
+              This code has expired.<Button size="sm" className="ml-auto" loading={code.loading} onClick={code.renew}>Get a new code</Button>
+            </div>
+          ) : code.line ? <CopyCode text={code.line} /> : <Spinner className="size-4" />}
+        </Step>
+      ) : null}
+
+      <Step n={needsCode ? 2 : 1} title={<>Open the Creative Studio folder and double-click {file}</>}>
+        <span>{hint}</span>
+      </Step>
+
+      <Step n={needsCode ? 3 : 2} title={needsCode ? 'Paste the code when it asks, then press Enter' : 'Just press Enter when it asks for a code (you’re already connected)'}>
+        <span>Leave that window open while you use Creative Studio. This page moves on by itself.</span>
+        {waiting ? <span className="flex items-center gap-1.5 text-[12px]"><Loader2 className="size-3 animate-spin" />Waiting for the helper…</span> : null}
+      </Step>
+
+      {needsCode && code.line ? (
+        <div>
+          <button className="flex items-center gap-1 text-[12.5px] text-muted hover:text-ink" onClick={() => setTyping((v) => !v)} aria-expanded={typing}>
+            <ChevronRight className={cx('size-3.5 transition-transform duration-150', typing && 'rotate-90')} />Prefer to type a command?
+          </button>
+          {typing ? (
+            <div className="mt-2 flex flex-col gap-1.5">
+              <span className="text-[12.5px] text-muted">In a terminal (Terminal on Mac, PowerShell on Windows) opened in the Creative Studio folder:</span>
+              <CopyLine text={`npm run companion -- connect "${code.line}"`} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** "Connect this computer" from the helper section: the same setup, and a tick when it checks in. */
+function ConnectComputer({ view, onClose }: { view: ConnectionsView; onClose: () => void }) {
+  const code = useConnectCode(true);
+  const [before] = useState(() => new Set(view.companion.devices.map((d) => d.id)));
+  const added = view.companion.devices.find((d) => !before.has(d.id));
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()} width={540} title="Connect this computer"
+      description="The helper app lets Creative Studio use your own ChatGPT and Claude sign-ins. Nothing leaves your computer except the results."
+      footer={<Button variant="primary" onClick={onClose}>{added ? 'Done' : 'Close'}</Button>}>
+      {added ? (
+        <div className="flex items-center gap-2 text-[13.5px] text-ok" data-testid="computer-connected"><CircleCheck className="size-4" />“{added.name}” is connected.</div>
+      ) : <HelperSetup needsCode code={code} waiting />}
+    </Dialog>
+  );
+}
+
+/**
+ * "Sign in with ChatGPT": one screen. With the helper running, the click goes straight to ChatGPT's
+ * sign-in in the browser; without it, the three setup steps come first and the sign-in follows by itself.
+ */
+function ConnectChatGpt({ view, onClose }: { view: ConnectionsView; onClose: () => void }) {
   const qc = useQueryClient();
   const openai = view.connections.find((c) => c.provider === 'openai')!;
   const online = view.companion.online;
@@ -189,65 +284,51 @@ function ConnectChatGpt({ view, origin, onClose }: { view: ConnectionsView; orig
   const connected = openai.status === 'connected';
   const s = openai.signIn ?? null;
   const [asked, setAsked] = useState(false);
-  const code = useMutation({ mutationFn: () => api.post<{ code: string; expiresAt: string }>('/connections/pairing-code') });
+  const started = useRef(false);
+  const code = useConnectCode(!online && !view.companion.paired);
   const signIn = useMutation({
     mutationFn: () => api.post<ConnectionsView>('/connections/openai/sign-in'),
     onSuccess: (v) => { qc.setQueryData(['connections'], v); setAsked(true); },
     onError: (e) => toast.error(e.message),
   });
-  // a pairing code is only needed when no companion runs; asked once per dialog
-  useEffect(() => { if (!view.companion.paired) code.mutate(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // the companion is up and ChatGPT isn't signed in: the click on "Sign in with ChatGPT" means go
+  // the helper is up and ChatGPT isn't signed in: the click on "Sign in with ChatGPT" means go
   useEffect(() => {
-    if (online && !noCli && !connected && !asked && !signIn.isPending && s?.state !== 'requested' && s?.state !== 'opened') signIn.mutate();
+    if (started.current || !online || noCli || connected || asked || signIn.isPending || s?.state === 'requested' || s?.state === 'opened') return;
+    started.current = true;
+    signIn.mutate();
   }, [online, noCli, connected]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (connected) toast.success('ChatGPT is connected'); }, [connected]);
 
   const pending = s?.state === 'requested' || s?.state === 'opened' || signIn.isPending;
-  const mac = device?.name ? `“${device.name}”` : 'your Mac';
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()} width={560} title="Sign in with ChatGPT"
-      description="Generation uses your own ChatGPT plan. Creative Studio never sees your password or asks for an API key."
+    <Dialog open onOpenChange={(v) => !v && onClose()} width={540} title="Sign in with ChatGPT"
+      description="A ChatGPT sign-in page opens in your browser. Sign in the way you normally do. Creative Studio never sees your password."
       footer={<Button variant="primary" onClick={onClose}>{connected ? 'Done' : 'Close'}</Button>}>
-      <div className="flex flex-col gap-5" data-testid="connect-chatgpt">
-        <Step n={1} title={online ? `The companion is running on ${mac}` : 'Start the companion on your Mac'} done={online}>
-          {online ? null : view.companion.paired ? (
-            <>
-              <span>It is paired but not running. In the Creative Studio folder on your Mac, run:</span>
-              <CopyLine text="npm run companion" />
-            </>
-          ) : (
-            <>
-              <span>In the Creative Studio folder on your Mac, run this once:</span>
-              {code.data ? <CopyLine text={`npm run companion -- pair --url ${origin} --code ${code.data.code}`} /> : <Spinner className="size-4" />}
-              <span>then keep it running with <code className="rounded bg-hover px-1">npm run companion</code>. If it already runs for another site, it picks this up by itself. This window moves on when it checks in.</span>
-            </>
-          )}
-          {!online ? <span className="flex items-center gap-1.5 text-[12px]"><Loader2 className="size-3 animate-spin" />Waiting for the companion…</span> : null}
-        </Step>
-
-        <Step n={2} title={connected ? 'Signed in with ChatGPT' : 'Sign in with ChatGPT'} done={connected}>
-          {connected ? <span className="flex items-center gap-1.5 text-ok"><CircleCheck className="size-3.5" />Connected. Generation now uses your ChatGPT plan.</span>
-            : !online ? <span>Next, ChatGPT’s sign-in page opens in your browser.</span>
-            : noCli ? (
-              <>
-                <span>The Codex CLI isn’t installed on {mac}. Install it, then try again:</span>
-                <CopyLine text="npm i -g @openai/codex" />
-                <div><Button size="sm" onClick={() => signIn.mutate()} loading={signIn.isPending}>Try again</Button></div>
-              </>
-            ) : s?.state === 'failed' && !signIn.isPending ? (
-              <>
-                <span className="flex items-start gap-1.5 text-err"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{s.message}</span>
-                <div><Button size="sm" variant="primary" icon={<LogIn className="size-3.5" />} onClick={() => signIn.mutate()}>Try again</Button></div>
-              </>
-            ) : pending ? (
-              <span className="flex items-start gap-1.5"><Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />
-                {s?.state === 'opened' ? `ChatGPT’s sign-in page is open in the browser on ${mac}. Sign in there and come back; this updates by itself.` : `Asking ${mac} to open ChatGPT’s sign-in page…`}
-              </span>
-            ) : (
-              <div><Button size="sm" variant="primary" icon={<LogIn className="size-3.5" />} onClick={() => signIn.mutate()}>Sign in with ChatGPT</Button></div>
-            )}
-        </Step>
+      <div data-testid="connect-chatgpt">
+        {connected ? (
+          <div className="flex items-center gap-2 text-[13.5px] text-ok"><CircleCheck className="size-4" />Connected. Generation now uses your ChatGPT plan.</div>
+        ) : !online ? (
+          <HelperSetup needsCode={!view.companion.paired} code={code} waiting />
+        ) : noCli ? (
+          <div className="flex flex-col gap-2 text-[13px] text-muted">
+            <span className="text-[14px] font-semibold text-ink">One more thing to install</span>
+            <span>ChatGPT’s tool (the Codex CLI) isn’t on this computer yet. In a terminal, run:</span>
+            <CopyLine text="npm i -g @openai/codex" />
+            <div><Button size="sm" onClick={() => signIn.mutate()} loading={signIn.isPending}>I installed it, try again</Button></div>
+          </div>
+        ) : s?.state === 'failed' && !signIn.isPending ? (
+          <div className="flex flex-col gap-3">
+            <span className="flex items-start gap-1.5 text-[13px] text-err"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{s.message}</span>
+            <div><Button size="sm" variant="primary" icon={<LogIn className="size-3.5" />} onClick={() => signIn.mutate()}>Try again</Button></div>
+          </div>
+        ) : pending ? (
+          <div className="flex items-start gap-2 text-[13.5px]">
+            <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" />
+            <span>{s?.state === 'opened' ? 'ChatGPT’s sign-in page is open in your browser. Sign in there, then come back. This updates by itself.' : 'Opening ChatGPT’s sign-in page…'}</span>
+          </div>
+        ) : (
+          <Button variant="primary" icon={<LogIn className="size-3.5" />} onClick={() => signIn.mutate()}>Sign in with ChatGPT</Button>
+        )}
       </div>
     </Dialog>
   );
@@ -256,9 +337,9 @@ function ConnectChatGpt({ view, origin, onClose }: { view: ConnectionsView; orig
 function CopyLine({ text }: { text: string }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2">
-      <Link2 className="size-3.5 text-muted" />
-      <code className="min-w-0 flex-1 truncate text-[12px]">{text}</code>
-      <button className="press rounded p-1 hoverable" aria-label="Copy" onClick={() => { void navigator.clipboard.writeText(text); toast.success('Copied'); }}><Copy className="size-3.5" /></button>
+      <Link2 className="size-3.5 shrink-0 text-muted" />
+      <code className="min-w-0 flex-1 break-all text-[12px]">{text}</code>
+      <button className="press rounded p-1 hoverable" aria-label="Copy" onClick={async () => { if (await copyText(text)) toast.success('Copied'); }}><Copy className="size-3.5" /></button>
     </div>
   );
 }

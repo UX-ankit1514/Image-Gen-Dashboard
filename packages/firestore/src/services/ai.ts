@@ -59,7 +59,7 @@ const SIGN_IN_OPEN_MS = 6 * 60_000;
 function signInView(s: ProviderConnection['signIn']): ProviderConnection['signIn'] {
   if (!s) return null;
   const age = Date.now() - Date.parse(s.at);
-  if (s.state === 'requested' && age > SIGN_IN_PICKUP_MS) return { ...s, state: 'failed', message: "The companion didn't pick up the sign-in. Check that it is running on your Mac, then try again." };
+  if (s.state === 'requested' && age > SIGN_IN_PICKUP_MS) return { ...s, state: 'failed', message: "The helper app didn't pick up the sign-in. Check that its window is still open on your computer, then try again." };
   if (s.state === 'opened' && age > SIGN_IN_OPEN_MS) return { ...s, state: 'failed', message: 'The ChatGPT sign-in was not finished. Try again.' };
   return s;
 }
@@ -87,7 +87,7 @@ export async function connectionsView(ctx: Ctx) {
 export async function requestSignIn(ctx: Ctx, id: ProviderId) {
   if (id !== 'openai') throw invalid('Only ChatGPT can be signed in from here.');
   const view = await connectionsView(ctx);
-  if (!view.companion.online) throw invalid('Start the companion on your Mac first, then sign in.');
+  if (!view.companion.online) throw invalid('Start the helper app on your computer first, then sign in.');
   const [openai] = await getConnections(ctx);
   const { disabled: _d, ...cur } = openai as ProviderConnection & { disabled?: boolean };
   await ctx.db.set(P.connection('openai'), { ...cur, signIn: { state: 'requested', at: nowIso(), deviceId: null, message: null }, updatedAt: nowIso() });
